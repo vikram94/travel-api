@@ -1,7 +1,6 @@
 package com.example.travel.domain;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 
 /**
  * A monetary amount in integer minor units, scale 2 (e.g. cents).

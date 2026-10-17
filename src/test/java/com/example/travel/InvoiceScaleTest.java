@@ -62,8 +62,8 @@ class InvoiceScaleTest extends AbstractHttpApiTest {
         String invoiceId = created.id();
 
         assertThat(invoice.get("item_count").asInt()).isEqualTo(COUNT);
-        assertThat(invoice.get("currency").asText()).isEqualTo("EUR");
-        assertThat(invoice.get("txn_set_hash").asText()).hasSize(64);
+        assertThat(invoice.get("currency").asString()).isEqualTo("EUR");
+        assertThat(invoice.get("txn_set_hash").asString()).hasSize(64);
 
         // ---- total: independent sum over the seeded rows
         long expectedGrandMinor = seeded.stream().mapToLong(StoredTransaction::totalMinor).sum();
@@ -104,8 +104,8 @@ class InvoiceScaleTest extends AbstractHttpApiTest {
             page.get("items").forEach(items::add);
             assertThat(items).isNotEmpty();
             for (JsonNode item : items) {
-                assertThat(seenTransactionIds.add(item.get("transaction_id").asText()))
-                        .as("duplicate item for transaction %s", item.get("transaction_id").asText())
+                assertThat(seenTransactionIds.add(item.get("transaction_id").asString()))
+                        .as("duplicate item for transaction %s", item.get("transaction_id").asString())
                         .isTrue();
                 assertThat(seenPositions.add(item.get("position").asInt()))
                         .as("duplicate position %s", item.get("position").asInt())
@@ -115,7 +115,7 @@ class InvoiceScaleTest extends AbstractHttpApiTest {
             if (page.get("items_next_cursor").isNull()) {
                 break;
             }
-            cursor = page.get("items_next_cursor").asText();
+            cursor = page.get("items_next_cursor").asString();
             assertThat(pages).isLessThan(10); // guard against a cursor that never ends
         }
         long readMillis = (System.nanoTime() - readStart) / 1_000_000;
@@ -186,7 +186,7 @@ class InvoiceScaleTest extends AbstractHttpApiTest {
 
     private static Map<String, Long> rollupAmounts(JsonNode rollup) {
         Map<String, Long> amounts = new LinkedHashMap<>();
-        rollup.forEach(entry -> amounts.put(entry.get("name").asText(), minor(entry.get("amount"))));
+        rollup.forEach(entry -> amounts.put(entry.get("name").asString(), minor(entry.get("amount"))));
         return amounts;
     }
 }

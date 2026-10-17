@@ -23,11 +23,11 @@ final class MetadataRules {
 
     static String text(JsonNode parent, String name, String field, int maxLength, List<FieldError> errors) {
         JsonNode node = parent == null ? null : parent.get(name);
-        if (node == null || node.isNull() || !node.isTextual()) {
+        if (node == null || node.isNull() || !node.isString()) {
             errors.add(new FieldError(field, "is required and must be a string"));
             return null;
         }
-        String value = node.asText();
+        String value = node.asString();
         if (value.isBlank()) {
             errors.add(new FieldError(field, "must not be blank"));
             return null;
@@ -44,11 +44,11 @@ final class MetadataRules {
         if (node == null || node.isNull()) {
             return null;
         }
-        if (!node.isTextual()) {
+        if (!node.isString()) {
             errors.add(new FieldError("metadata." + name, "must be a string"));
             return null;
         }
-        String value = node.asText();
+        String value = node.asString();
         if (value.length() > maxLength) {
             errors.add(new FieldError("metadata." + name, "must be at most " + maxLength + " characters"));
             return null;
@@ -59,12 +59,12 @@ final class MetadataRules {
     /** Required ISO-8601 instant with offset, truncated to micros, stored as UTC. */
     static LocalDateTime instant(JsonNode parent, String name, String field, List<FieldError> errors) {
         JsonNode node = parent == null ? null : parent.get(name);
-        if (node == null || node.isNull() || !node.isTextual()) {
+        if (node == null || node.isNull() || !node.isString()) {
             errors.add(new FieldError(field, "is required and must be an ISO-8601 timestamp"));
             return null;
         }
         try {
-            return OffsetDateTime.parse(node.asText())
+            return OffsetDateTime.parse(node.asString())
                     .withOffsetSameInstant(ZoneOffset.UTC)
                     .toLocalDateTime()
                     .truncatedTo(ChronoUnit.MICROS);
@@ -77,11 +77,11 @@ final class MetadataRules {
     /** Optional ISO date; accepts a plain date (2026-03-11) or a full timestamp. */
     static LocalDateTime date(JsonNode parent, String name, String field, List<FieldError> errors) {
         JsonNode node = parent == null ? null : parent.get(name);
-        if (node == null || node.isNull() || !node.isTextual()) {
+        if (node == null || node.isNull() || !node.isString()) {
             errors.add(new FieldError(field, "is required and must be an ISO-8601 date"));
             return null;
         }
-        String value = node.asText();
+        String value = node.asString();
         try {
             return java.time.LocalDate.parse(value).atStartOfDay();
         } catch (RuntimeException e) {

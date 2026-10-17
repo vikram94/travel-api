@@ -49,7 +49,7 @@ class InvoiceConcurrencyTest extends AbstractHttpApiTest {
         String winnerId = created.getFirst().id();
         conflicts.forEach(conflict -> {
             assertThat(conflict.error()).isEqualTo("invoice_exists_for_set");
-            assertThat(conflict.body().get("existing_invoice_id").asText()).isEqualTo(winnerId);
+            assertThat(conflict.body().get("existing_invoice_id").asString()).isEqualTo(winnerId);
         });
 
         assertThat(invoiceRepository.countAll()).isEqualTo(1);
@@ -90,7 +90,7 @@ class InvoiceConcurrencyTest extends AbstractHttpApiTest {
         // final state — the race could never interleave them
         BigDecimal transactionTotal = transaction.get("total").decimalValue();
         var invoiceFlightItem = invoice.get("items").get(0);
-        assertThat(invoiceFlightItem.get("transaction_id").asText()).isEqualTo(flightId);
+        assertThat(invoiceFlightItem.get("transaction_id").asString()).isEqualTo(flightId);
         assertThat(invoiceFlightItem.get("total").decimalValue())
                 .isEqualByComparingTo(transactionTotal);
         assertThat(invoice.get("total").decimalValue()).isEqualByComparingTo(transactionTotal);

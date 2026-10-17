@@ -5,7 +5,6 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Collection;
 import java.util.HexFormat;
-import java.util.List;
 
 /**
  * Transaction-set fingerprint: SHA-256 over the sorted ids joined with '\n'.

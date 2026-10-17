@@ -18,11 +18,11 @@ final class NavanFeeValidator {
 
     static FeeKind validate(JsonNode metadata, List<FieldError> errors) {
         JsonNode node = metadata.get("fee_kind");
-        if (node == null || node.isNull() || !node.isTextual() || node.asText().isBlank()) {
+        if (node == null || node.isNull() || !node.isString() || node.asString().isBlank()) {
             errors.add(new FieldError("metadata.fee_kind", "is required (trip_fee or agent_call_fee)"));
             return null;
         }
-        FeeKind feeKind = FeeKind.fromWire(node.asText());
+        FeeKind feeKind = FeeKind.fromWire(node.asString());
         if (feeKind == null) {
             errors.add(new FieldError("metadata.fee_kind", "must be one of: trip_fee, agent_call_fee"));
         }

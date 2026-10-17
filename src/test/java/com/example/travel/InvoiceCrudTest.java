@@ -41,8 +41,8 @@ class InvoiceCrudTest extends AbstractHttpApiTest {
         assertThat(created.status()).isEqualTo(201);
 
         var invoice = get("/invoices/" + created.id()).body();
-        assertThat(invoice.get("currency").asText())
-                .isEqualTo(EXPECTED.get("currency").asText());
+        assertThat(invoice.get("currency").asString())
+                .isEqualTo(EXPECTED.get("currency").asString());
         assertThat(invoice.get("item_count").asInt())
                 .isEqualTo(5);
         assertThat(invoice.get("total").decimalValue())
@@ -50,27 +50,27 @@ class InvoiceCrudTest extends AbstractHttpApiTest {
 
         // per-type contributions
         Map<String, String> totals = Map.of(
-                "flight", EXPECTED.get("totals").get("flight").asText(),
-                "hotel", EXPECTED.get("totals").get("hotel").asText(),
-                "rail", EXPECTED.get("totals").get("rail").asText());
+                "flight", EXPECTED.get("totals").get("flight").asString(),
+                "hotel", EXPECTED.get("totals").get("hotel").asString(),
+                "rail", EXPECTED.get("totals").get("rail").asString());
         Set<String> feeKinds = new HashSet<>();
         Set<String> types = new HashSet<>();
         var items = invoice.get("items");
         assertThat(items).hasSize(5);
         for (var item : items) {
-            types.add(item.get("type").asText());
-            String type = item.get("type").asText();
+            types.add(item.get("type").asString());
+            String type = item.get("type").asString();
             if (totals.containsKey(type)) {
                 assertThat(item.get("total").decimalValue())
                         .as("total of %s", type)
                         .isEqualByComparingTo(totals.get(type));
             }
             if ("navan_fee".equals(type)) {
-                String feeKind = item.get("metadata").get("fee_kind").asText();
+                String feeKind = item.get("metadata").get("fee_kind").asString();
                 feeKinds.add(feeKind);
                 String expectedFeeTotal = "trip_fee".equals(feeKind)
-                        ? EXPECTED.get("totals").get("trip_fee").asText()
-                        : EXPECTED.get("totals").get("agent_call_fee").asText();
+                        ? EXPECTED.get("totals").get("trip_fee").asString()
+                        : EXPECTED.get("totals").get("agent_call_fee").asString();
                 assertThat(item.get("total").decimalValue()).isEqualByComparingTo(expectedFeeTotal);
             }
             // metadata round-trips, not an empty object
@@ -95,7 +95,7 @@ class InvoiceCrudTest extends AbstractHttpApiTest {
 
         // structural metadata checks from the fixture
         var flightItem = itemByType(items, "flight");
-        assertThat(flightItem.get("metadata").get("coupons").get(0).get("flight_number").asText()).isEqualTo("BA982");
+        assertThat(flightItem.get("metadata").get("coupons").get(0).get("flight_number").asString()).isEqualTo("BA982");
         assertThat(itemByType(items, "hotel").get("metadata").get("address").has("street")).isTrue();
         assertThat(itemByType(items, "rail").get("metadata").get("legs").size()).isEqualTo(2);
     }
@@ -153,7 +153,7 @@ class InvoiceCrudTest extends AbstractHttpApiTest {
         List<String> trip = createTrip();
         HttpResult created = post("/invoices", multiInvoiceBody(trip));
         assertThat(created.status()).isEqualTo(201);
-        String hash = created.body().get("txn_set_hash").asText();
+        String hash = created.body().get("txn_set_hash").asString();
 
         assertThat(delete("/invoices/" + created.id()).status()).isEqualTo(204);
         assertThat(get("/invoices/" + created.id()).status()).isEqualTo(404);
@@ -168,7 +168,7 @@ class InvoiceCrudTest extends AbstractHttpApiTest {
         // the fingerprint was freed: the same set can be invoiced again
         HttpResult again = post("/invoices", multiInvoiceBody(trip));
         assertThat(again.status()).isEqualTo(201);
-        assertThat(again.body().get("txn_set_hash").asText()).isEqualTo(hash);
+        assertThat(again.body().get("txn_set_hash").asString()).isEqualTo(hash);
     }
 
     // ------------------------------------------------------ plan test 11
@@ -184,14 +184,14 @@ class InvoiceCrudTest extends AbstractHttpApiTest {
         HttpResult same = post("/invoices", multiInvoiceBody(trip));
         assertThat(same.status()).isEqualTo(409);
         assertThat(same.error()).isEqualTo("invoice_exists_for_set");
-        assertThat(same.body().get("existing_invoice_id").asText()).isEqualTo(first.id());
+        assertThat(same.body().get("existing_invoice_id").asString()).isEqualTo(first.id());
 
         // reversed order is the same set
         List<String> reversed = new ArrayList<>(trip);
         java.util.Collections.reverse(reversed);
         HttpResult reversedResult = post("/invoices", multiInvoiceBody(reversed));
         assertThat(reversedResult.status()).isEqualTo(409);
-        assertThat(reversedResult.body().get("existing_invoice_id").asText()).isEqualTo(first.id());
+        assertThat(reversedResult.body().get("existing_invoice_id").asString()).isEqualTo(first.id());
 
         // a subset is a different set -> 201
         HttpResult subset = post("/invoices", multiInvoiceBody(List.of(trip.getFirst(), trip.get(1))));
@@ -211,7 +211,7 @@ class InvoiceCrudTest extends AbstractHttpApiTest {
         List<String> trip = createTrip();
         HttpResult invoiceA = post("/invoices", multiInvoiceBody(trip));
         assertThat(invoiceA.status()).isEqualTo(201);
-        String originalHash = invoiceA.body().get("txn_set_hash").asText();
+        String originalHash = invoiceA.body().get("txn_set_hash").asString();
 
         String x = post("/transactions", uniqueSeed("flight")).id();
         String y = post("/transactions", uniqueSeed("rail")).id();
@@ -224,7 +224,7 @@ class InvoiceCrudTest extends AbstractHttpApiTest {
         HttpResult owned = patch("/invoices/" + invoiceA.id(), singleInvoiceBody(x));
         assertThat(owned.status()).isEqualTo(409);
         assertThat(owned.error()).isEqualTo("invoice_exists_for_set");
-        assertThat(owned.body().get("existing_invoice_id").asText()).isEqualTo(invoiceB.id());
+        assertThat(owned.body().get("existing_invoice_id").asString()).isEqualTo(invoiceB.id());
         assertUnchanged(invoiceA.id(), trip.size(), "685.70", originalHash);
 
         // mixed currency -> 409, unchanged
@@ -248,21 +248,21 @@ class InvoiceCrudTest extends AbstractHttpApiTest {
         var invoice = get("/invoices/" + invoiceA.id()).body();
         assertThat(invoice.get("item_count").asInt()).isEqualTo(2);
         assertThat(invoice.get("items")).hasSize(2);
-        assertThat(invoice.get("txn_set_hash").asText()).isNotEqualTo(originalHash);
+        assertThat(invoice.get("txn_set_hash").asString()).isNotEqualTo(originalHash);
         var xBody = get("/transactions/" + x).body();
         var yBody = get("/transactions/" + y).body();
         assertThat(invoice.get("total").decimalValue()).isEqualByComparingTo(
                 xBody.get("total").decimalValue().add(yBody.get("total").decimalValue()));
         Set<String> itemIds = new HashSet<>();
-        invoice.get("items").forEach(item -> itemIds.add(item.get("transaction_id").asText()));
+        invoice.get("items").forEach(item -> itemIds.add(item.get("transaction_id").asString()));
         assertThat(itemIds).containsExactlyInAnyOrder(x, y);
         // rollups were rebuilt from exactly the new set: flight YQ + rail Booking fee,
         // nothing left over from the original five-txn invoice
         assertThat(invoice.get("fee_rollup")).hasSize(2);
-        assertThat(invoice.get("fee_rollup").get(0).get("name").asText()).isEqualTo("Booking fee");
-        assertThat(invoice.get("fee_rollup").get(1).get("name").asText()).isEqualTo("YQ");
+        assertThat(invoice.get("fee_rollup").get(0).get("name").asString()).isEqualTo("Booking fee");
+        assertThat(invoice.get("fee_rollup").get(1).get("name").asString()).isEqualTo("YQ");
         assertThat(invoice.get("tax_rollup")).hasSize(1); // only the flight's Airport tax
-        assertThat(invoice.get("tax_rollup").get(0).get("name").asText()).isEqualTo("Airport tax");
+        assertThat(invoice.get("tax_rollup").get(0).get("name").asString()).isEqualTo("Airport tax");
 
         // PATCH to the same set again is fine (id <> ? exemption)
         HttpResult again = patch("/invoices/" + invoiceA.id(), multiInvoiceBody(List.of(x, y)));
@@ -300,7 +300,7 @@ class InvoiceCrudTest extends AbstractHttpApiTest {
         assertThat(missing.status()).isEqualTo(404);
         assertThat(missing.error()).isEqualTo("transaction_not_found");
         List<String> listed = new ArrayList<>();
-        missing.body().get("ids").forEach(node -> listed.add(node.asText()));
+        missing.body().get("ids").forEach(node -> listed.add(node.asString()));
         assertThat(listed).containsExactly("txn_missing_1", "txn_missing_2");
 
         // bad shapes -> 400
@@ -324,7 +324,7 @@ class InvoiceCrudTest extends AbstractHttpApiTest {
         var page1 = get("/invoices/" + created.id() + "?items_limit=2").body();
         assertThat(page1.get("items")).hasSize(2);
         assertThat(page1.get("items").get(0).get("position").asInt()).isZero();
-        assertThat(page1.get("items_next_cursor").asText()).isEqualTo("1");
+        assertThat(page1.get("items_next_cursor").asString()).isEqualTo("1");
         assertThat(page1.get("tax_rollup")).hasSize(2); // full rollups on every page
         assertThat(page1.get("fee_rollup")).hasSize(2);
 
@@ -332,7 +332,7 @@ class InvoiceCrudTest extends AbstractHttpApiTest {
         var page2 = get("/invoices/" + created.id() + "?items_limit=2&items_cursor=1").body();
         assertThat(page2.get("items")).hasSize(2);
         assertThat(page2.get("items").get(0).get("position").asInt()).isEqualTo(2);
-        assertThat(page2.get("items_next_cursor").asText()).isEqualTo("3");
+        assertThat(page2.get("items_next_cursor").asString()).isEqualTo("3");
 
         // last page
         var page3 = get("/invoices/" + created.id() + "?items_limit=2&items_cursor=3").body();
@@ -364,7 +364,7 @@ class InvoiceCrudTest extends AbstractHttpApiTest {
         assertThat(page1.get("items")).hasSize(2);
         assertThat(page1.get("next_cursor").isNull()).isFalse();
 
-        String cursor = page1.get("next_cursor").asText();
+        String cursor = page1.get("next_cursor").asString();
         var page2 = get("/invoices?limit=2&cursor=" + cursor).body();
         assertThat(page2.get("items")).hasSize(1);
         assertThat(page2.get("next_cursor").isNull()).isTrue();
@@ -374,7 +374,7 @@ class InvoiceCrudTest extends AbstractHttpApiTest {
         assertThat(header.get("item_count").asInt()).isGreaterThanOrEqualTo(1);
         assertThat(header.has("items")).isFalse();
         assertThat(header.has("tax_rollup")).isFalse();
-        assertThat(header.get("txn_set_hash").asText()).hasSize(64);
+        assertThat(header.get("txn_set_hash").asString()).hasSize(64);
 
         assertThat(get("/invoices?limit=0").status()).isEqualTo(400);
         assertThat(get("/invoices?limit=101").status()).isEqualTo(400);
@@ -393,12 +393,12 @@ class InvoiceCrudTest extends AbstractHttpApiTest {
         var invoice = get("/invoices/" + invoiceId).body();
         assertThat(invoice.get("item_count").asInt()).isEqualTo(expectedItems);
         assertThat(invoice.get("total").decimalValue()).isEqualByComparingTo(expectedTotal);
-        assertThat(invoice.get("txn_set_hash").asText()).isEqualTo(expectedHash);
+        assertThat(invoice.get("txn_set_hash").asString()).isEqualTo(expectedHash);
     }
 
     private static JsonNode itemByType(JsonNode items, String type) {
         for (JsonNode item : items) {
-            if (type.equals(item.get("type").asText())) {
+            if (type.equals(item.get("type").asString())) {
                 return item;
             }
         }
@@ -407,7 +407,7 @@ class InvoiceCrudTest extends AbstractHttpApiTest {
 
     private static JsonNode findByName(JsonNode array, String name) {
         for (JsonNode element : array) {
-            if (name.equals(element.get("name").asText())) {
+            if (name.equals(element.get("name").asString())) {
                 return element;
             }
         }
@@ -416,7 +416,7 @@ class InvoiceCrudTest extends AbstractHttpApiTest {
 
     private static List<String> listOfStrings(JsonNode array) {
         List<String> values = new ArrayList<>();
-        array.forEach(node -> values.add(node.asText()));
+        array.forEach(node -> values.add(node.asString()));
         return values;
     }
 }

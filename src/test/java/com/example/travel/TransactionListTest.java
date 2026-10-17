@@ -46,7 +46,7 @@ class TransactionListTest extends AbstractHttpApiTest {
         assertThat(page1.get("items")).hasSize(50);
         assertThat(page1.get("next_cursor").isNull()).isFalse();
 
-        String cursor = page1.get("next_cursor").asText();
+        String cursor = page1.get("next_cursor").asString();
         var page2 = get("/transactions?cursor=" + cursor).body();
         assertThat(page2.get("items")).hasSize(10);
         assertThat(page2.get("next_cursor").isNull()).isTrue();
@@ -55,12 +55,12 @@ class TransactionListTest extends AbstractHttpApiTest {
         Set<String> seenIds = new HashSet<>();
         Set<String> seenExternalIds = new HashSet<>();
         page1.get("items").forEach(item -> {
-            seenIds.add(item.get("id").asText());
-            seenExternalIds.add(item.get("external_id").asText());
+            seenIds.add(item.get("id").asString());
+            seenExternalIds.add(item.get("external_id").asString());
         });
         page2.get("items").forEach(item -> {
-            seenIds.add(item.get("id").asText());
-            seenExternalIds.add(item.get("external_id").asText());
+            seenIds.add(item.get("id").asString());
+            seenExternalIds.add(item.get("external_id").asString());
         });
         assertThat(seenIds).hasSize(60);
         assertThat(seenExternalIds).hasSize(60);
@@ -68,8 +68,8 @@ class TransactionListTest extends AbstractHttpApiTest {
         // created_at is strictly increasing across the boundary
         var lastOfPage1 = page1.get("items").get(49);
         var firstOfPage2 = page2.get("items").get(0);
-        assertThat(firstOfPage2.get("created_at").asText())
-                .isGreaterThan(lastOfPage1.get("created_at").asText());
+        assertThat(firstOfPage2.get("created_at").asString())
+                .isGreaterThan(lastOfPage1.get("created_at").asString());
     }
 
     @Test
@@ -79,9 +79,9 @@ class TransactionListTest extends AbstractHttpApiTest {
         var page = get("/transactions?limit=100").body();
         assertThat(page.get("items")).hasSize(10);
         var first = page.get("items").get(0);
-        assertThat(first.get("external_id").asText()).isEqualTo("list-000");
-        assertThat(first.get("tax_lines").get(0).get("name").asText()).isEqualTo("T0");
-        assertThat(first.get("fee_lines").get(0).get("name").asText()).isEqualTo("F0");
+        assertThat(first.get("external_id").asString()).isEqualTo("list-000");
+        assertThat(first.get("tax_lines").get(0).get("name").asString()).isEqualTo("T0");
+        assertThat(first.get("fee_lines").get(0).get("name").asString()).isEqualTo("F0");
         // transactions without lines still return empty arrays, not nulls
         assertThat(page.get("items").get(1).get("tax_lines")).isEmpty();
     }
@@ -109,11 +109,11 @@ class TransactionListTest extends AbstractHttpApiTest {
         // a well-formed cursor from another list still parses (keyset, not offset)
         var one = get("/transactions?limit=1").body();
         assertThat(one.get("items")).hasSize(1);
-        String cursor = one.get("next_cursor").asText();
+        String cursor = one.get("next_cursor").asString();
         var afterOne = get("/transactions?limit=100&cursor=" + cursor).body();
         assertThat(afterOne.get("items")).hasSize(100);
-        assertThat(afterOne.get("items").get(0).get("id").asText())
-                .isNotEqualTo(one.get("items").get(0).get("id").asText());
+        assertThat(afterOne.get("items").get(0).get("id").asString())
+                .isNotEqualTo(one.get("items").get(0).get("id").asString());
     }
 
     @Test
@@ -121,7 +121,7 @@ class TransactionListTest extends AbstractHttpApiTest {
         seedTransactions(60);
         var page1 = get("/transactions?limit=50").body();
         assertThat(page1.get("items")).hasSize(50);
-        String cursor = page1.get("next_cursor").asText();
+        String cursor = page1.get("next_cursor").asString();
 
         // rows that land after the cursor but before the unread tail, and rows
         // after the whole seeded set — a keyset list must keep serving the
@@ -130,12 +130,12 @@ class TransactionListTest extends AbstractHttpApiTest {
         insertRows(65, 5, base.plusSeconds(120), Duration.ofSeconds(1));
 
         Set<String> page1Originals = new HashSet<>();
-        page1.get("items").forEach(item -> page1Originals.add(item.get("external_id").asText()));
+        page1.get("items").forEach(item -> page1Originals.add(item.get("external_id").asString()));
         assertThat(page1Originals).hasSize(50).allMatch(ext -> ext.compareTo("list-050") < 0);
 
         var page2 = get("/transactions?limit=100&cursor=" + cursor).body();
         Set<String> page2ExternalIds = new HashSet<>();
-        page2.get("items").forEach(item -> page2ExternalIds.add(item.get("external_id").asText()));
+        page2.get("items").forEach(item -> page2ExternalIds.add(item.get("external_id").asString()));
 
         // every remaining original row appears exactly once and never repeats
         for (int i = 50; i < 60; i++) {
@@ -149,7 +149,7 @@ class TransactionListTest extends AbstractHttpApiTest {
         // and all 60 originals were seen exactly once across the two pages
         Set<String> allOriginals = new HashSet<>(page1Originals);
         page2.get("items").forEach(item -> {
-            String externalId = item.get("external_id").asText();
+            String externalId = item.get("external_id").asString();
             if (externalId.compareTo("list-060") < 0) {
                 assertThat(allOriginals.add(externalId))
                         .as("original %s appeared twice", externalId)

@@ -73,11 +73,11 @@ public abstract class AbstractHttpApiTest {
     protected record HttpResult(int status, JsonNode body, Map<String, List<String>> headers) {
 
         public String id() {
-            return body().get("id").asText();
+            return body().get("id").asString();
         }
 
         public String error() {
-            return body().get("error").asText();
+            return body().get("error").asString();
         }
 
         public String header(String name) {

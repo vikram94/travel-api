@@ -231,7 +231,7 @@ class ValidationTest extends AbstractHttpApiTest {
 
     private static List<String> fieldErrors(JsonNode body) {
         List<String> fields = new java.util.ArrayList<>();
-        body.get("errors").forEach(error -> fields.add(error.get("field").asText()));
+        body.get("errors").forEach(error -> fields.add(error.get("field").asString()));
         return fields;
     }
 

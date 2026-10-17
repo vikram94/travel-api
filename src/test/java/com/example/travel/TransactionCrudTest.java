@@ -29,7 +29,7 @@ class TransactionCrudTest extends AbstractHttpApiTest {
     void healthEndpointReportsOkWithoutTouchingTheDatabase() {
         HttpResult result = get("/health");
         assertThat(result.status()).isEqualTo(200);
-        assertThat(result.body().get("status").asText()).isEqualTo("ok");
+        assertThat(result.body().get("status").asString()).isEqualTo("ok");
     }
 
     @Test
@@ -44,31 +44,31 @@ class TransactionCrudTest extends AbstractHttpApiTest {
                 .containsExactly(201, 201, 201, 201, 201);
 
         var gotFlight = get("/transactions/" + flight.id()).body();
-        assertThat(gotFlight.get("type").asText()).isEqualTo("flight");
+        assertThat(gotFlight.get("type").asString()).isEqualTo("flight");
         assertThat(gotFlight.get("total").decimalValue()).isEqualByComparingTo("220");
-        assertThat(gotFlight.get("metadata").get("origin").asText()).isEqualTo("TXL");
+        assertThat(gotFlight.get("metadata").get("origin").asString()).isEqualTo("TXL");
         assertThat(gotFlight.get("metadata").get("coupons")).hasSize(1);
-        assertThat(gotFlight.get("metadata").get("coupons").get(0).get("flight_number").asText())
+        assertThat(gotFlight.get("metadata").get("coupons").get(0).get("flight_number").asString())
                 .isEqualTo("BA982");
-        assertThat(gotFlight.get("tax_lines").get(0).get("name").asText()).isEqualTo("Airport tax");
+        assertThat(gotFlight.get("tax_lines").get(0).get("name").asString()).isEqualTo("Airport tax");
         assertThat(gotFlight.get("tax_lines").get(0).get("amount").decimalValue()).isEqualByComparingTo("15");
-        assertThat(gotFlight.get("fee_lines").get(0).get("name").asText()).isEqualTo("YQ");
+        assertThat(gotFlight.get("fee_lines").get(0).get("name").asString()).isEqualTo("YQ");
 
         var gotHotel = get("/transactions/" + hotel.id()).body();
-        assertThat(gotHotel.get("type").asText()).isEqualTo("hotel");
-        assertThat(gotHotel.get("metadata").get("name").asText()).isEqualTo("Hotel Mitte London");
-        assertThat(gotHotel.get("metadata").get("address").get("city").asText()).isEqualTo("London");
+        assertThat(gotHotel.get("type").asString()).isEqualTo("hotel");
+        assertThat(gotHotel.get("metadata").get("name").asString()).isEqualTo("Hotel Mitte London");
+        assertThat(gotHotel.get("metadata").get("address").get("city").asString()).isEqualTo("London");
         assertThat(gotHotel.get("metadata").get("nights").asInt()).isEqualTo(2);
         assertThat(gotHotel.get("tax_lines").get(0).get("rate").decimalValue()).isEqualByComparingTo("0.07");
 
         var gotRail = get("/transactions/" + rail.id()).body();
-        assertThat(gotRail.get("type").asText()).isEqualTo("rail");
+        assertThat(gotRail.get("type").asString()).isEqualTo("rail");
         assertThat(gotRail.get("metadata").get("legs")).hasSize(2);
-        assertThat(gotRail.get("metadata").get("legs").get(1).get("train_number").asText()).isEqualTo("EST9122");
+        assertThat(gotRail.get("metadata").get("legs").get(1).get("train_number").asString()).isEqualTo("EST9122");
 
-        assertThat(get("/transactions/" + tripFee.id()).body().get("metadata").get("fee_kind").asText())
+        assertThat(get("/transactions/" + tripFee.id()).body().get("metadata").get("fee_kind").asString())
                 .isEqualTo("trip_fee");
-        assertThat(get("/transactions/" + agentFee.id()).body().get("metadata").get("fee_kind").asText())
+        assertThat(get("/transactions/" + agentFee.id()).body().get("metadata").get("fee_kind").asString())
                 .isEqualTo("agent_call_fee");
 
         assertThat(transactionRepository.countAll()).isEqualTo(5);
@@ -82,7 +82,7 @@ class TransactionCrudTest extends AbstractHttpApiTest {
         HttpResult second = post("/transactions", seed("flight"));
         assertThat(second.status()).isEqualTo(409);
         assertThat(second.error()).isEqualTo("duplicate_external_id");
-        assertThat(second.body().get("existing_id").asText()).isEqualTo(first.id());
+        assertThat(second.body().get("existing_id").asString()).isEqualTo(first.id());
 
         assertThat(transactionRepository.countAll()).isEqualTo(1);
     }
@@ -95,7 +95,7 @@ class TransactionCrudTest extends AbstractHttpApiTest {
 
         HttpResult second = post("/transactions", different);
         assertThat(second.status()).isEqualTo(409);
-        assertThat(second.body().get("existing_id").asText()).isEqualTo(first.id());
+        assertThat(second.body().get("existing_id").asString()).isEqualTo(first.id());
         assertThat(transactionRepository.countAll()).isEqualTo(1);
         // the loser must not rewrite the winner
         assertThat(get("/transactions/" + first.id()).body().get("total").decimalValue())
@@ -123,13 +123,13 @@ class TransactionCrudTest extends AbstractHttpApiTest {
         assertThat(result.status()).isEqualTo(200);
         assertThat(result.body().get("total").decimalValue()).isEqualByComparingTo("250.55");
         assertThat(result.body().get("tax_lines")).hasSize(1);
-        assertThat(result.body().get("tax_lines").get(0).get("name").asText()).isEqualTo("Security fee");
+        assertThat(result.body().get("tax_lines").get(0).get("name").asString()).isEqualTo("Security fee");
         assertThat(result.body().get("fee_lines")).isEmpty();
-        assertThat(result.body().get("external_id").asText()).isEqualTo(body.get("external_id"));
+        assertThat(result.body().get("external_id").asString()).isEqualTo(body.get("external_id"));
 
         var got = get("/transactions/" + id).body();
         assertThat(got.get("total").decimalValue()).isEqualByComparingTo("250.55");
-        assertThat(got.get("occurred_at").asText()).isEqualTo("2026-03-12T10:00:00Z");
+        assertThat(got.get("occurred_at").asString()).isEqualTo("2026-03-12T10:00:00Z");
     }
 
     @Test
@@ -148,8 +148,8 @@ class TransactionCrudTest extends AbstractHttpApiTest {
 
         // nothing persisted by the rejected patches
         var got = get("/transactions/" + id).body();
-        assertThat(got.get("type").asText()).isEqualTo("flight");
-        assertThat(got.get("currency").asText()).isEqualTo("EUR");
+        assertThat(got.get("type").asString()).isEqualTo("flight");
+        assertThat(got.get("currency").asString()).isEqualTo("EUR");
     }
 
     @Test

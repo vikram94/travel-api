@@ -1,6 +1,5 @@
 package com.example.travel.domain;
 
-import java.util.List;
 import java.util.Map;
 
 /**

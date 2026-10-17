@@ -59,7 +59,7 @@ class TransactionConcurrencyTest extends AbstractHttpApiTest {
         String winnerId = created.getFirst().id();
         conflicts.forEach(conflict -> {
             assertThat(conflict.error()).isEqualTo("duplicate_external_id");
-            assertThat(conflict.body().get("existing_id").asText()).isEqualTo(winnerId);
+            assertThat(conflict.body().get("existing_id").asString()).isEqualTo(winnerId);
         });
 
         assertThat(transactionRepository.countAll()).isEqualTo(1);
