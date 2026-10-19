@@ -63,7 +63,8 @@ class InvoiceScaleTest extends AbstractHttpApiTest {
 
         assertThat(invoice.get("item_count").asInt()).isEqualTo(COUNT);
         assertThat(invoice.get("currency").asString()).isEqualTo("EUR");
-        assertThat(invoice.get("txn_set_hash").asString()).hasSize(64);
+        assertThat(invoice.has("txn_set_hash")).isFalse();
+        assertThat(invoice.has("updated_at")).isTrue();
 
         // ---- total: independent sum over the seeded rows
         long expectedGrandMinor = seeded.stream().mapToLong(StoredTransaction::totalMinor).sum();
@@ -171,6 +172,7 @@ class InvoiceScaleTest extends AbstractHttpApiTest {
                     10_000L + i,
                     feeKind,
                     objectMapper.createObjectNode(),
+                    base.plusSeconds(i),
                     base.plusSeconds(i),
                     taxes,
                     fees));

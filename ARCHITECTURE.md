@@ -55,7 +55,13 @@ transaction where possible, so a bad request never takes a lock.
   stored. `total` is **gross** — tax and fee lines are descriptive and are never
   added on top.
 - **Timestamps** are `TIMESTAMP(6)` and truncated to microseconds in the app, so
-  what the cursor encodes is exactly what the database stores.
+  what the cursor encodes is exactly what the database stores. Request offsets
+  are normalized to UTC (`+01:00` is stored and echoed as `Z`).
+- **Every row carries `created_at` and `updated_at`**, both `TIMESTAMP(6)`.
+  `updated_at` begins equal to `created_at` and only moves on a real `UPDATE`: a
+  `PATCH` that fails validation or hits a conflict rolls back, so the pair stays
+  equal, and clients can tell a no-op from a write. Both are returned on
+  transactions and invoices.
 - **Indexes**: `idx_transactions_created (created_at, id)` and
   `idx_invoices_created (created_at, id)` serve keyset pagination;
   `idx_invoice_items_tx (transaction_id)` answers "is this transaction on an
@@ -105,6 +111,27 @@ Validation is field-level and returns
 paths like `metadata.coupons[0].arrival` or `tax_lines[0].rate`. `total` is not
 verified against `fare + taxes + fees` — that is the client's business.
 
+**Partial PATCH.** `PATCH /transactions/{id}` takes its own request record where
+an absent field means "keep the stored value", a present field replaces it, and
+`tax_lines: []` (present, empty) clears the list while an absent `tax_lines`
+leaves it alone. `type`, `external_id` and `currency` are immutable: omit them or
+echo the stored value (a no-op that still rewrites `updated_at`); a different
+value is **400**. The stored row is locked, merged with the sent fields, and the
+*whole* result is re-validated, so a partial body cannot slip an inconsistent
+state past the checks a full `POST` enforces.
+
+**The JSON boundary is hardened.** Requests parse into records with
+`property-naming-strategy=SNAKE_CASE`; unknown keys are ignored and numeric
+strings are coerced. Money is never a `double`: amounts arrive as `BigDecimal`
+and are converted to minor units by a bounded routine that checks the
+integer-digit count *before* `movePointRight`, so a hostile exponent
+(`1E+999999999`) is a **400**, not an `ArithmeticException` → 500. Tax `rate`
+gets the same treatment — `setScale` is skipped when the value cannot reach the
+fourth decimal — and is rendered with trailing zeros stripped (`0.07`, not
+`0.0700`; `1`, not `1E+0`), so the wire value and the scale-normalized rollup key
+agree. Malformed JSON, wrong JSON types (`"total": "abc"`) and `null` inside a
+line list are converted to **400** by the advice in section 10.
+
 ## 5. The invoice snapshot is not a live join
 
 `invoice_items` stores a **copy** of each transaction's state at invoice time:
@@ -134,6 +161,9 @@ txn_set_hash = SHA-256( join(sorted(ids), "\n") )   // 64 lowercase hex chars
   outside its transaction and returns 409 with the winner's id (test 12).
 - A cheap **fast path** (`SELECT id FROM invoices WHERE txn_set_hash = ?`, no
   locks) rejects the obvious duplicate before any row is locked.
+- The hash is **internal**: it is the uniqueness guard and is deliberately
+  **not** returned in any response (neither create/patch bodies nor list
+  headers). Clients identify invoices by `id`.
 - The hash is **not** a payload hash: billed transactions are immutable, so the
   same set always means the same content. `DELETE /invoices/{id}` removes the
   row and frees the fingerprint, which is why the same set can be re-issued
@@ -207,6 +237,13 @@ Both lists and invoice items use a seek on a stable ordered key:
   table**, not per row.
 
 ## 10. Failure modes, operations, and what we would do next
+
+**400 for bad input, never 500.** Malformed JSON and any value Jackson cannot
+coerce into the request records are mapped by a single `@RestControllerAdvice`
+to **400 `invalid_json`**; rule failures become **400 `validation_error`** with a
+field list. The same advice maps not-found (404), duplicate / immutable /
+conflict (409) and contention (503), so no exception shape escapes as Spring's
+default error body.
 
 **503, never 500, for contention.** Lock waits, deadlocks, serialization
 failures and query timeouts are transient: the API maps them to **503** with

@@ -12,6 +12,7 @@ import java.util.List;
 
 import com.example.travel.api.dto.CreateTransactionRequest;
 import com.example.travel.api.dto.FeeLineRequest;
+import com.example.travel.api.dto.PatchTransactionRequest;
 import com.example.travel.api.dto.TaxLineRequest;
 import com.example.travel.domain.FeeKind;
 import com.example.travel.domain.FeeLine;
@@ -20,6 +21,7 @@ import com.example.travel.domain.TaxLine;
 import com.example.travel.domain.TransactionType;
 import com.example.travel.domain.ValidationException;
 import com.example.travel.domain.ValidationException.FieldError;
+import com.example.travel.transaction.StoredTransaction;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
@@ -56,6 +58,19 @@ public class TransactionValidator {
             FeeKind feeKind) {
     }
 
+    /**
+     * Result of a partial PATCH: a complete, ready-to-persist view where absent
+     * fields were filled in from the stored row.
+     */
+    public record Merged(
+            LocalDateTime occurredAt,
+            long totalMinor,
+            List<TaxLine> taxLines,
+            List<FeeLine> feeLines,
+            JsonNode metadata,
+            FeeKind feeKind) {
+    }
+
     public Parsed parse(CreateTransactionRequest request) {
         List<FieldError> errors = new ArrayList<>();
 
@@ -66,31 +81,80 @@ public class TransactionValidator {
         long totalMinor = parseAmount(request.total(), "total", errors);
         List<TaxLine> taxLines = parseTaxLines(request.taxLines(), errors);
         List<FeeLine> feeLines = parseFeeLines(request.feeLines(), errors);
-
-        JsonNode metadata = request.metadata();
-        FeeKind feeKind = null;
-        if (metadata == null || metadata.isNull()) {
-            errors.add(new FieldError("metadata", "is required and must be a JSON object with type-specific fields"));
-        } else if (!metadata.isObject()) {
-            errors.add(new FieldError("metadata", "must be a JSON object"));
-        } else {
-            checkMetadataSize(metadata, errors);
-            switch (type == null ? null : type) {
-                case FLIGHT -> FlightValidator.validate(metadata, errors);
-                case HOTEL -> HotelValidator.validate(metadata, errors);
-                case RAIL -> RailValidator.validate(metadata, errors);
-                case NAVAN_FEE -> feeKind = NavanFeeValidator.validate(metadata, errors);
-                case null, default -> {
-                    // unknown type: already reported
-                }
-            }
-        }
+        FeeKind feeKind = validateMetadata(request.metadata(), type, errors);
 
         if (!errors.isEmpty()) {
             throw new ValidationException(errors);
         }
         return new Parsed(type, request.externalId(), currency, occurredAt, totalMinor,
-                taxLines, feeLines, metadata, feeKind);
+                taxLines, feeLines, request.metadata(), feeKind);
+    }
+
+    /**
+     * Partial PATCH: only the fields present in the body are validated; absent
+     * fields keep the stored value. tax_lines / fee_lines are replace-whole, so a
+     * present empty list clears them while an absent list is left untouched. The
+     * type is immutable here, so it is taken from {@code existing}.
+     */
+    public Merged mergeInto(StoredTransaction existing, PatchTransactionRequest request) {
+        List<FieldError> errors = new ArrayList<>();
+
+        LocalDateTime occurredAt = request.occurredAt() == null
+                ? existing.occurredAt()
+                : parseOccurredAt(request.occurredAt(), errors);
+        long totalMinor = request.total() == null
+                ? existing.totalMinor()
+                : parseAmount(request.total(), "total", errors);
+        List<TaxLine> taxLines = request.taxLines() == null
+                ? existing.taxLines()
+                : parseTaxLines(request.taxLines(), errors);
+        List<FeeLine> feeLines = request.feeLines() == null
+                ? existing.feeLines()
+                : parseFeeLines(request.feeLines(), errors);
+
+        JsonNode metadata = existing.metadata();
+        FeeKind feeKind = existing.feeKind();
+        if (request.metadata() != null && !request.metadata().isNull()) {
+            metadata = request.metadata();
+            feeKind = validateMetadata(metadata, existing.type(), errors);
+        }
+
+        if (!errors.isEmpty()) {
+            throw new ValidationException(errors);
+        }
+        return new Merged(occurredAt, totalMinor, taxLines, feeLines, metadata, feeKind);
+    }
+
+    /**
+     * Validates the type-specific metadata blob and returns the derived fee_kind
+     * (navan_fee only). Shared by POST and PATCH; appends every problem found.
+     */
+    private FeeKind validateMetadata(JsonNode metadata, TransactionType type, List<FieldError> errors) {
+        if (metadata == null || metadata.isNull()) {
+            errors.add(new FieldError("metadata", "is required and must be a JSON object with type-specific fields"));
+            return null;
+        }
+        if (!metadata.isObject()) {
+            errors.add(new FieldError("metadata", "must be a JSON object"));
+            return null;
+        }
+        checkMetadataSize(metadata, errors);
+        return switch (type == null ? null : type) {
+            case FLIGHT -> {
+                FlightValidator.validate(metadata, errors);
+                yield null;
+            }
+            case HOTEL -> {
+                HotelValidator.validate(metadata, errors);
+                yield null;
+            }
+            case RAIL -> {
+                RailValidator.validate(metadata, errors);
+                yield null;
+            }
+            case NAVAN_FEE -> NavanFeeValidator.validate(metadata, errors);
+            case null, default -> null;
+        };
     }
 
     private static TransactionType parseType(String type, List<FieldError> errors) {
@@ -157,14 +221,19 @@ public class TransactionValidator {
         for (int i = 0; i < Math.min(lines.size(), MAX_TAX_LINES); i++) {
             TaxLineRequest line = lines.get(i);
             String field = "tax_lines[" + i + "]";
+            if (line == null) {
+                errors.add(new FieldError(field, "must be a JSON object, not null"));
+                continue;
+            }
             String name = checkedName(line.name(), field + ".name", errors);
             long amountMinor = parseAmount(line.amount(), field + ".amount", errors);
             BigDecimal rate = null;
             if (line.rate() != null) {
-                if (line.rate().signum() < 0 || line.rate().compareTo(BigDecimal.ONE) > 0) {
+                BigDecimal raw = line.rate();
+                if (raw.signum() < 0 || raw.compareTo(BigDecimal.ONE) > 0) {
                     errors.add(new FieldError(field + ".rate", "must be between 0 and 1"));
                 } else {
-                    rate = line.rate().setScale(4, RoundingMode.HALF_UP);
+                    rate = roundedRate(raw);
                 }
             }
             if (name != null && amountMinor >= 0) {
@@ -186,6 +255,10 @@ public class TransactionValidator {
         for (int i = 0; i < Math.min(lines.size(), MAX_FEE_LINES); i++) {
             FeeLineRequest line = lines.get(i);
             String field = "fee_lines[" + i + "]";
+            if (line == null) {
+                errors.add(new FieldError(field, "must be a JSON object, not null"));
+                continue;
+            }
             String name = checkedName(line.name(), field + ".name", errors);
             long amountMinor = parseAmount(line.amount(), field + ".amount", errors);
             if (name != null && amountMinor >= 0) {
@@ -193,6 +266,23 @@ public class TransactionValidator {
             }
         }
         return List.copyOf(parsed);
+    }
+
+    /**
+     * Rounds a rate to 4 decimal places. Rates are range-checked to [0,1] but not
+     * scale-checked, and {@code setScale} on a hostile {@code 1E-999999999} tries
+     * to build a 10^999999999 factor. When every significant digit sits more than
+     * one place past the fourth decimal the value rounds to zero, so short-circuit.
+     */
+    private static BigDecimal roundedRate(BigDecimal rate) {
+        if (rate.signum() == 0) {
+            return BigDecimal.ZERO.setScale(4);
+        }
+        BigDecimal normalized = rate.stripTrailingZeros();
+        if ((long) normalized.scale() - normalized.precision() > 4) {
+            return BigDecimal.ZERO.setScale(4);
+        }
+        return normalized.setScale(4, RoundingMode.HALF_UP);
     }
 
     private static String checkedName(String name, String field, List<FieldError> errors) {

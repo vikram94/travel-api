@@ -191,6 +191,7 @@ class TransactionListTest extends AbstractHttpApiTest {
                     null,
                     objectMapper.createObjectNode(),
                     createdAt,
+                    createdAt,
                     withLines
                             ? List.of(new TaxLine("T" + index, new java.math.BigDecimal("0.0700"), 50L))
                             : List.of(),

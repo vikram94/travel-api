@@ -120,7 +120,9 @@ class InvoiceCrudTest extends AbstractHttpApiTest {
                 java.time.LocalDateTime.parse("2026-03-11T06:40:00"),
                 50000L,
                 objectMapper.writeValueAsString(stored.get("metadata")),
-                null, List.of(), List.of());
+                null,
+                java.time.LocalDateTime.parse("2026-03-11T06:41:00"),
+                List.of(), List.of());
 
         assertThat(get("/transactions/" + flightId).body().get("total").decimalValue())
                 .isEqualByComparingTo("500.00");
@@ -149,11 +151,11 @@ class InvoiceCrudTest extends AbstractHttpApiTest {
     // ------------------------------------------------------- plan test 9
 
     @Test
-    void deleteInvoiceKeepsTransactionsAndFreesTheSetHash() {
+    void deleteInvoiceKeepsTransactionsAndFreesTheSet() {
         List<String> trip = createTrip();
         HttpResult created = post("/invoices", multiInvoiceBody(trip));
         assertThat(created.status()).isEqualTo(201);
-        String hash = created.body().get("txn_set_hash").asString();
+        assertThat(created.body().has("txn_set_hash")).isFalse();
 
         assertThat(delete("/invoices/" + created.id()).status()).isEqualTo(204);
         assertThat(get("/invoices/" + created.id()).status()).isEqualTo(404);
@@ -165,10 +167,9 @@ class InvoiceCrudTest extends AbstractHttpApiTest {
         }
         assertThat(transactionRepository.countAll()).isEqualTo(5);
 
-        // the fingerprint was freed: the same set can be invoiced again
+        // the unique fingerprint was freed: the same set can be invoiced again
         HttpResult again = post("/invoices", multiInvoiceBody(trip));
         assertThat(again.status()).isEqualTo(201);
-        assertThat(again.body().get("txn_set_hash").asString()).isEqualTo(hash);
     }
 
     // ------------------------------------------------------ plan test 11
@@ -211,7 +212,10 @@ class InvoiceCrudTest extends AbstractHttpApiTest {
         List<String> trip = createTrip();
         HttpResult invoiceA = post("/invoices", multiInvoiceBody(trip));
         assertThat(invoiceA.status()).isEqualTo(201);
-        String originalHash = invoiceA.body().get("txn_set_hash").asString();
+        String createdAt = invoiceA.body().get("created_at").asString();
+        // a fresh invoice has never been patched
+        assertThat(invoiceA.body().get("updated_at").asString()).isEqualTo(createdAt);
+        assertThat(invoiceA.body().has("txn_set_hash")).isFalse();
 
         String x = post("/transactions", uniqueSeed("flight")).id();
         String y = post("/transactions", uniqueSeed("rail")).id();
@@ -225,7 +229,7 @@ class InvoiceCrudTest extends AbstractHttpApiTest {
         assertThat(owned.status()).isEqualTo(409);
         assertThat(owned.error()).isEqualTo("invoice_exists_for_set");
         assertThat(owned.body().get("existing_invoice_id").asString()).isEqualTo(invoiceB.id());
-        assertUnchanged(invoiceA.id(), trip.size(), "685.70", originalHash);
+        assertUnchanged(invoiceA.id(), trip.size(), "685.70");
 
         // mixed currency -> 409, unchanged
         List<String> mixed = new ArrayList<>(trip);
@@ -233,22 +237,22 @@ class InvoiceCrudTest extends AbstractHttpApiTest {
         HttpResult mixedResult = patch("/invoices/" + invoiceA.id(), multiInvoiceBody(mixed));
         assertThat(mixedResult.status()).isEqualTo(409);
         assertThat(mixedResult.error()).isEqualTo("mixed_currency");
-        assertUnchanged(invoiceA.id(), trip.size(), "685.70", originalHash);
+        assertUnchanged(invoiceA.id(), trip.size(), "685.70");
 
         // missing id -> 404, unchanged
         HttpResult missing = patch("/invoices/" + invoiceA.id(), singleInvoiceBody("txn_nope"));
         assertThat(missing.status()).isEqualTo(404);
         assertThat(missing.error()).isEqualTo("transaction_not_found");
-        assertUnchanged(invoiceA.id(), trip.size(), "685.70", originalHash);
+        assertUnchanged(invoiceA.id(), trip.size(), "685.70");
 
-        // valid new set -> full rebuild of items, rollups, total and hash
+        // valid new set -> full rebuild of items, rollups and total
         HttpResult rebuilt = patch("/invoices/" + invoiceA.id(), multiInvoiceBody(List.of(x, y)));
         assertThat(rebuilt.status()).isEqualTo(200);
 
         var invoice = get("/invoices/" + invoiceA.id()).body();
         assertThat(invoice.get("item_count").asInt()).isEqualTo(2);
         assertThat(invoice.get("items")).hasSize(2);
-        assertThat(invoice.get("txn_set_hash").asString()).isNotEqualTo(originalHash);
+        assertThat(invoice.get("updated_at").asString()).isNotEqualTo(createdAt);
         var xBody = get("/transactions/" + x).body();
         var yBody = get("/transactions/" + y).body();
         assertThat(invoice.get("total").decimalValue()).isEqualByComparingTo(
@@ -374,7 +378,9 @@ class InvoiceCrudTest extends AbstractHttpApiTest {
         assertThat(header.get("item_count").asInt()).isGreaterThanOrEqualTo(1);
         assertThat(header.has("items")).isFalse();
         assertThat(header.has("tax_rollup")).isFalse();
-        assertThat(header.get("txn_set_hash").asString()).hasSize(64);
+        // the internal fingerprint is not exposed; updated_at is
+        assertThat(header.has("txn_set_hash")).isFalse();
+        assertThat(header.has("updated_at")).isTrue();
 
         assertThat(get("/invoices?limit=0").status()).isEqualTo(400);
         assertThat(get("/invoices?limit=101").status()).isEqualTo(400);
@@ -389,11 +395,12 @@ class InvoiceCrudTest extends AbstractHttpApiTest {
         return body;
     }
 
-    private void assertUnchanged(String invoiceId, int expectedItems, String expectedTotal, String expectedHash) {
+    private void assertUnchanged(String invoiceId, int expectedItems, String expectedTotal) {
         var invoice = get("/invoices/" + invoiceId).body();
         assertThat(invoice.get("item_count").asInt()).isEqualTo(expectedItems);
         assertThat(invoice.get("total").decimalValue()).isEqualByComparingTo(expectedTotal);
-        assertThat(invoice.get("txn_set_hash").asString()).isEqualTo(expectedHash);
+        // a refused PATCH rolled back: the row was never written, so updated_at == created_at
+        assertThat(invoice.get("updated_at").asString()).isEqualTo(invoice.get("created_at").asString());
     }
 
     private static JsonNode itemByType(JsonNode items, String type) {

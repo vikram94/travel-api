@@ -17,5 +17,6 @@ public record TransactionResponse(
         List<TaxLineResponse> taxLines,
         List<FeeLineResponse> feeLines,
         JsonNode metadata,
-        Instant createdAt) {
+        Instant createdAt,
+        Instant updatedAt) {
 }

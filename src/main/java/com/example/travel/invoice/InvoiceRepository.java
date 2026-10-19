@@ -21,11 +21,11 @@ public class InvoiceRepository {
 
     static final int BATCH_SIZE = 500;
 
-    private static final String HEADER_COLUMNS = "id, currency, total_minor, item_count, txn_set_hash, created_at";
+    private static final String HEADER_COLUMNS = "id, currency, total_minor, item_count, created_at, updated_at";
 
     private static final String INSERT_HEADER = """
-            INSERT INTO invoices (id, currency, total_minor, item_count, txn_set_hash, created_at)
-            VALUES (:id, :currency, :totalMinor, :itemCount, :txnSetHash, :createdAt)
+            INSERT INTO invoices (id, currency, total_minor, item_count, txn_set_hash, created_at, updated_at)
+            VALUES (:id, :currency, :totalMinor, :itemCount, :txnSetHash, :createdAt, :updatedAt)
             """;
 
     private static final String INSERT_ITEM = """
@@ -151,14 +151,15 @@ public class InvoiceRepository {
 
     /** Caller owns the transaction; a concurrent identical set surfaces as DuplicateKeyException. */
     public void insertHeader(String id, String currency, long totalMinor, int itemCount,
-                             String txnSetHash, LocalDateTime createdAt) {
+                             String txnSetHash, LocalDateTime createdAt, LocalDateTime updatedAt) {
         jdbc.update(INSERT_HEADER, new MapSqlParameterSource()
                 .addValue("id", id)
                 .addValue("currency", currency)
                 .addValue("totalMinor", totalMinor)
                 .addValue("itemCount", itemCount)
                 .addValue("txnSetHash", txnSetHash)
-                .addValue("createdAt", createdAt));
+                .addValue("createdAt", createdAt)
+                .addValue("updatedAt", updatedAt));
     }
 
     public void insertItems(String invoiceId, List<InvoiceSnapshot.SnapshotItem> items) {
@@ -220,15 +221,17 @@ public class InvoiceRepository {
                 new MapSqlParameterSource().addValue("invoiceId", invoiceId));
     }
 
-    public void updateHeader(String id, String currency, long totalMinor, int itemCount, String txnSetHash) {
+    public void updateHeader(String id, String currency, long totalMinor, int itemCount,
+                             String txnSetHash, LocalDateTime updatedAt) {
         jdbc.update(
                 "UPDATE invoices SET currency = :currency, total_minor = :totalMinor, "
-                        + "item_count = :itemCount, txn_set_hash = :txnSetHash WHERE id = :id",
+                        + "item_count = :itemCount, txn_set_hash = :txnSetHash, updated_at = :updatedAt WHERE id = :id",
                 new MapSqlParameterSource()
                         .addValue("currency", currency)
                         .addValue("totalMinor", totalMinor)
                         .addValue("itemCount", itemCount)
                         .addValue("txnSetHash", txnSetHash)
+                        .addValue("updatedAt", updatedAt)
                         .addValue("id", id));
     }
 
@@ -262,7 +265,7 @@ public class InvoiceRepository {
                 rs.getString("currency"),
                 rs.getLong("total_minor"),
                 rs.getInt("item_count"),
-                rs.getString("txn_set_hash"),
-                rs.getObject("created_at", LocalDateTime.class));
+                rs.getObject("created_at", LocalDateTime.class),
+                rs.getObject("updated_at", LocalDateTime.class));
     }
 }

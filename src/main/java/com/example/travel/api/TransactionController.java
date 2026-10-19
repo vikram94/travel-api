@@ -1,6 +1,7 @@
 package com.example.travel.api;
 
 import com.example.travel.api.dto.CreateTransactionRequest;
+import com.example.travel.api.dto.PatchTransactionRequest;
 import com.example.travel.api.dto.TransactionListResponse;
 import com.example.travel.api.dto.TransactionResponse;
 import com.example.travel.transaction.TransactionService;
@@ -37,7 +38,7 @@ public class TransactionController {
     }
 
     @PatchMapping("/{id}")
-    TransactionResponse patch(@PathVariable String id, @RequestBody CreateTransactionRequest request) {
+    TransactionResponse patch(@PathVariable String id, @RequestBody PatchTransactionRequest request) {
         return service.patch(id, request);
     }
 

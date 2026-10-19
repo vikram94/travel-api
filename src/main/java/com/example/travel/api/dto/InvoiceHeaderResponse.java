@@ -9,6 +9,6 @@ public record InvoiceHeaderResponse(
         String currency,
         BigDecimal total,
         int itemCount,
-        String txnSetHash,
-        Instant createdAt) {
+        Instant createdAt,
+        Instant updatedAt) {
 }

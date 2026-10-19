@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     fee_kind    VARCHAR(32),
     metadata    TEXT         NOT NULL,
     created_at  TIMESTAMP(6) NOT NULL,
+    updated_at  TIMESTAMP(6) NOT NULL,
     CONSTRAINT ux_transactions_external_id UNIQUE (external_id)
 );
 
@@ -56,6 +57,7 @@ CREATE TABLE IF NOT EXISTS invoices (
     -- constraint is what rejects concurrent identical invoice creation.
     txn_set_hash CHAR(64)    NOT NULL,
     created_at   TIMESTAMP(6) NOT NULL,
+    updated_at   TIMESTAMP(6) NOT NULL,
     CONSTRAINT ux_invoices_txn_set_hash UNIQUE (txn_set_hash)
 );
 

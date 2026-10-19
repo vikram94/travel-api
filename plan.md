@@ -104,7 +104,7 @@ Error `{ "error", "message" }` plus extra keys where stated. Lock/deadlock/query
 
 - POST **201**. `batchUpdate` lines. Duplicate `external_id` → 409 `{error:"duplicate_external_id", existing_id}` even if body differs. Insert in `TransactionTemplate`; catch `DuplicateKeyException` **outside**; fresh read by `external_id`.
 - GET by id 200/404; lines ordered by `position`.
-- PATCH replace-whole `total`/`tax_lines`/`fee_lines`/`metadata`/`occurred_at`. Immutable `type`/`external_id`/`currency` → 400 if changed. `FOR UPDATE` then invoiced-check → 409 `transaction_invoiced`. 200 updated.
+- PATCH is **partial** `total`/`tax_lines`/`fee_lines`/`metadata`/`occurred_at`: absent keeps stored, present replaces, `tax_lines: []` clears. Immutable `type`/`external_id`/`currency` → 400 if changed. `FOR UPDATE` then invoiced-check → 409 `transaction_invoiced`. 200 updated; `updated_at` advances.
 - DELETE 204; invoiced 409; repeat DELETE 404.
 - **List keyset** `?limit=&cursor=` (no `offset`). Default 50, max 100; `limit` out of range → 400. Cursor = base64url `<created_at ISO micros>|<id>`; invalid → 400. SQL `(created_at, id)` seek, `LIMIT :limit+1`. `next_cursor` or null. Child lines one `IN` per table.
 
@@ -154,7 +154,7 @@ Fixtures: 685.70 EUR; tax Airport tax 15 + VAT 0.07/21.70; fee YQ 25 + Booking f
 
 11. Same set twice → 409 `invoice_exists_for_set` + first id; reversed order 409; **subset** 201; after DELETE same set 201.
 12. Concurrent identical invoice POSTs: one 201, one 409, one row.
-13. PATCH to a set another invoice owns → 409 unchanged; mixed currency PATCH 409 unchanged; valid new set rebuilds items/rollups/total/hash.
+13. PATCH to a set another invoice owns → 409 unchanged; mixed currency PATCH 409 unchanged; valid new set rebuilds items/rollups/total and advances `updated_at`.
 14. **Scale:** bulk-insert 1000 txns via repository; POST invoice of all 1000 → 201, total/rollups vs independent sum, `item_count` 1000; walk `items_cursor` every item once in request order; log duration, no wall-clock fail.
 15. 1001 ids → 400 `too_many_transactions`; repeated id 409; missing id 404 with ids listed.
 16. Race PATCH txn vs invoice create: exactly one winner, consistent end state.

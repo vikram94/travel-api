@@ -13,7 +13,7 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
 
-import com.example.travel.api.dto.CreateInvoiceRequest;
+import com.example.travel.api.dto.InvoiceTransactionsRequest;
 import com.example.travel.api.dto.FeeLineResponse;
 import com.example.travel.api.dto.FeeRollupResponse;
 import com.example.travel.api.dto.InvoiceHeaderResponse;
@@ -95,7 +95,7 @@ public class InvoiceService {
 
     // -------------------------------------------------------------- create
 
-    public InvoiceResponse create(CreateInvoiceRequest request) {
+    public InvoiceResponse create(InvoiceTransactionsRequest request) {
         List<String> ids = parseIds(request);
         String txnSetHash = Hashing.txnSetHash(ids);
         List<String> sorted = ids.stream().sorted().toList();
@@ -109,15 +109,15 @@ public class InvoiceService {
             build = transactionTemplate.execute(status -> {
                 Map<String, StoredTransaction> loaded = loadAndLock(sorted);
                 InvoiceSnapshot snapshot = snapshotBuilder.build(inRequestOrder(ids, loaded));
-                LocalDateTime createdAt = nowUtc();
+                LocalDateTime now = nowUtc();
                 String invoiceId = newInvoiceId();
                 invoiceRepository.insertHeader(invoiceId, snapshot.currency(), snapshot.totalMinor(),
-                        snapshot.items().size(), txnSetHash, createdAt);
+                        snapshot.items().size(), txnSetHash, now, now);
                 invoiceRepository.insertItems(invoiceId, snapshot.items());
                 invoiceRepository.insertTaxRollup(invoiceId, snapshot.taxRollup());
                 invoiceRepository.insertFeeRollup(invoiceId, snapshot.feeRollup());
                 InvoiceHeader header = new InvoiceHeader(invoiceId, snapshot.currency(), snapshot.totalMinor(),
-                        snapshot.items().size(), txnSetHash, createdAt);
+                        snapshot.items().size(), now, now);
                 return new InvoiceBuild(header, snapshot);
             });
         } catch (DuplicateKeyException e) {
@@ -155,7 +155,7 @@ public class InvoiceService {
     // --------------------------------------------------------------- patch
 
     /** Replaces the transaction set: locks the invoice first, then the transactions. */
-    public InvoiceResponse patch(String id, CreateInvoiceRequest request) {
+    public InvoiceResponse patch(String id, InvoiceTransactionsRequest request) {
         List<String> ids = parseIds(request);
         String txnSetHash = Hashing.txnSetHash(ids);
         List<String> sorted = ids.stream().sorted().toList();
@@ -177,12 +177,13 @@ public class InvoiceService {
                 invoiceRepository.insertTaxRollup(id, snapshot.taxRollup());
                 invoiceRepository.insertFeeRollup(id, snapshot.feeRollup());
 
+                LocalDateTime updatedAt = nowUtc();
                 InvoiceHeader existing = invoiceRepository.findById(id)
                         .orElseThrow(() -> new NotFoundException("invoice " + id + " not found"));
                 invoiceRepository.updateHeader(id, snapshot.currency(), snapshot.totalMinor(),
-                        snapshot.items().size(), txnSetHash);
+                        snapshot.items().size(), txnSetHash, updatedAt);
                 InvoiceHeader header = new InvoiceHeader(id, snapshot.currency(), snapshot.totalMinor(),
-                        snapshot.items().size(), txnSetHash, existing.createdAt());
+                        snapshot.items().size(), existing.createdAt(), updatedAt);
                 return new InvoiceBuild(header, snapshot);
             });
         } catch (DuplicateKeyException e) {
@@ -226,7 +227,8 @@ public class InvoiceService {
         List<InvoiceHeaderResponse> items = page.stream()
                 .map(header -> new InvoiceHeaderResponse(header.id(), header.currency(),
                         Money.ofMinor(header.totalMinor()).toDecimal(), header.itemCount(),
-                        header.txnSetHash(), header.createdAt().atZone(ZoneOffset.UTC).toInstant()))
+                        header.createdAt().atZone(ZoneOffset.UTC).toInstant(),
+                        header.updatedAt().atZone(ZoneOffset.UTC).toInstant()))
                 .toList();
         return new InvoiceListResponse(items, nextCursor);
     }
@@ -234,7 +236,7 @@ public class InvoiceService {
     // -------------------------------------------------------------- helpers
 
     /** Shape (exactly one id field, non-empty) -> cap -> repeated ids, all before any DB work. */
-    private List<String> parseIds(CreateInvoiceRequest request) {
+    private List<String> parseIds(InvoiceTransactionsRequest request) {
         boolean hasSingle = request.transactionId() != null;
         List<String> requested = request.transactionIds();
         boolean hasMany = requested != null && !requested.isEmpty();
@@ -330,8 +332,8 @@ public class InvoiceService {
                 header.currency(),
                 Money.ofMinor(header.totalMinor()).toDecimal(),
                 header.itemCount(),
-                header.txnSetHash(),
                 header.createdAt().atZone(ZoneOffset.UTC).toInstant(),
+                header.updatedAt().atZone(ZoneOffset.UTC).toInstant(),
                 taxRollup.stream()
                         .map(line -> new TaxRollupResponse(line.name(), line.rate(),
                                 Money.ofMinor(line.amountMinor()).toDecimal()))

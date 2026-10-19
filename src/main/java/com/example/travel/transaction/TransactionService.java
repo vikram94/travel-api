@@ -9,6 +9,7 @@ import java.util.UUID;
 
 import com.example.travel.api.dto.CreateTransactionRequest;
 import com.example.travel.api.dto.FeeLineResponse;
+import com.example.travel.api.dto.PatchTransactionRequest;
 import com.example.travel.api.dto.TaxLineResponse;
 import com.example.travel.api.dto.TransactionListResponse;
 import com.example.travel.api.dto.TransactionResponse;
@@ -59,9 +60,10 @@ public class TransactionService {
     public TransactionResponse create(CreateTransactionRequest request) {
         // validate/hash/JSON before the DB transaction where possible
         TransactionValidator.Parsed parsed = validator.parse(request);
+        LocalDateTime now = nowUtc();
         StoredTransaction toInsert = new StoredTransaction(
                 newId(), parsed.externalId(), parsed.type(), parsed.currency(), parsed.occurredAt(),
-                parsed.totalMinor(), parsed.feeKind(), parsed.metadata(), nowUtc(),
+                parsed.totalMinor(), parsed.feeKind(), parsed.metadata(), now, now,
                 parsed.taxLines(), parsed.feeLines());
         try {
             transactionTemplate.executeWithoutResult(status -> repository.insert(toInsert));
@@ -77,21 +79,24 @@ public class TransactionService {
     }
 
     /**
-     * Replace-whole PATCH of total/tax_lines/fee_lines/metadata/occurred_at.
-     * Locks the row, rejects immutable-field changes, then refuses with 409
-     * when the transaction is on any invoice (snapshots stay frozen).
+     * Partial PATCH: absent fields keep their stored value, present fields replace
+     * theirs (an empty tax_lines/fee_lines list clears it). Locks the row, rejects
+     * immutable-field changes, then refuses with 409 when the transaction is on any
+     * invoice (snapshots stay frozen).
      */
-    public TransactionResponse patch(String id, CreateTransactionRequest request) {
-        TransactionValidator.Parsed parsed = validator.parse(request);
+    public TransactionResponse patch(String id, PatchTransactionRequest request) {
         return transactionTemplate.execute(status -> {
-            StoredTransaction existing = lockForUpdate(id);
+            // lockForUpdate loads the header only; hydrate the line lists for the merge
+            lockForUpdate(id);
+            StoredTransaction existing = repository.findById(id).orElseThrow(() -> notFound(id));
             checkImmutable(existing, request);
             if (repository.isOnInvoice(id)) {
                 throw ConflictException.transactionInvoiced(id);
             }
-            repository.replaceContent(id, parsed.occurredAt(), parsed.totalMinor(),
-                    objectMapper.writeValueAsString(parsed.metadata()), parsed.feeKind(),
-                    parsed.taxLines(), parsed.feeLines());
+            TransactionValidator.Merged merged = validator.mergeInto(existing, request);
+            repository.replaceContent(id, merged.occurredAt(), merged.totalMinor(),
+                    objectMapper.writeValueAsString(merged.metadata()), merged.feeKind(), nowUtc(),
+                    merged.taxLines(), merged.feeLines());
             return responseOf(repository.findById(id).orElseThrow(() -> notFound(id)));
         });
     }
@@ -140,7 +145,7 @@ public class TransactionService {
         return rows.getFirst();
     }
 
-    private static void checkImmutable(StoredTransaction existing, CreateTransactionRequest request) {
+    private static void checkImmutable(StoredTransaction existing, PatchTransactionRequest request) {
         if (request.type() != null && !request.type().equals(existing.type().wire())) {
             throw new ValidationException("type", "is immutable and cannot be changed");
         }
@@ -183,6 +188,7 @@ public class TransactionService {
                         .map(line -> new FeeLineResponse(line.name(), Money.ofMinor(line.amountMinor()).toDecimal()))
                         .toList(),
                 transaction.metadata(),
-                transaction.createdAt().atZone(ZoneOffset.UTC).toInstant());
+                transaction.createdAt().atZone(ZoneOffset.UTC).toInstant(),
+                transaction.updatedAt().atZone(ZoneOffset.UTC).toInstant());
     }
 }

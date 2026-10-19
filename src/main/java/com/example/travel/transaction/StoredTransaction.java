@@ -11,7 +11,7 @@ import tools.jackson.databind.JsonNode;
 
 /**
  * A transaction exactly as stored: header + tax lines + fee lines.
- * Money is minor units; occurredAt/createdAt are UTC truncated to micros.
+ * Money is minor units; occurredAt/createdAt/updatedAt are UTC truncated to micros.
  */
 public record StoredTransaction(
         String id,
@@ -23,11 +23,12 @@ public record StoredTransaction(
         FeeKind feeKind,
         JsonNode metadata,
         LocalDateTime createdAt,
+        LocalDateTime updatedAt,
         List<TaxLine> taxLines,
         List<FeeLine> feeLines) {
 
     public StoredTransaction withLines(List<TaxLine> taxLines, List<FeeLine> feeLines) {
         return new StoredTransaction(id, externalId, type, currency, occurredAt, totalMinor, feeKind,
-                metadata, createdAt, taxLines, feeLines);
+                metadata, createdAt, updatedAt, taxLines, feeLines);
     }
 }

@@ -1,8 +1,8 @@
 package com.example.travel.api;
 
-import com.example.travel.api.dto.CreateInvoiceRequest;
 import com.example.travel.api.dto.InvoiceListResponse;
 import com.example.travel.api.dto.InvoiceResponse;
+import com.example.travel.api.dto.InvoiceTransactionsRequest;
 import com.example.travel.invoice.InvoiceService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -25,7 +25,7 @@ public class InvoiceController {
     }
 
     @PostMapping("/invoices")
-    ResponseEntity<InvoiceResponse> create(@RequestBody CreateInvoiceRequest request) {
+    ResponseEntity<InvoiceResponse> create(@RequestBody InvoiceTransactionsRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(service.create(request));
     }
 
@@ -37,7 +37,7 @@ public class InvoiceController {
     }
 
     @PatchMapping("/invoices/{id}")
-    InvoiceResponse patch(@PathVariable String id, @RequestBody CreateInvoiceRequest request) {
+    InvoiceResponse patch(@PathVariable String id, @RequestBody InvoiceTransactionsRequest request) {
         return service.patch(id, request);
     }
 

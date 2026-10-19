@@ -44,7 +44,7 @@ curl -s localhost:8080/health
 ./gradlew test
 ```
 
-**64 automated tests**, all green: unit tests for `Money`, `Hashing`, `Cursor`
+**79 automated tests**, all green: unit tests for `Money`, `Hashing`, `Cursor`
 and `RollupAccumulator`, and real-HTTP integration tests that start the full
 application on a random port and call it over `java.net.http.HttpClient`.
 
@@ -102,7 +102,23 @@ rm -rf ./data          # next boot recreates the schema (idempotent CREATE TABLE
   with "\n")` is `UNIQUE` on `invoices`, so the same set cannot be billed twice
   (including in reversed order). Concurrent identical creates resolve through the
   unique index: one **201**, the rest **409 `invoice_exists_for_set`** with the
-  winner's id. `DELETE` frees the fingerprint, so an invoice can be re-issued.
+  winner's id. `DELETE` frees the fingerprint, so an invoice can be re-issued. It
+  is an implementation detail and is **not exposed** on the API.
+- **PATCH is partial.** Send only what changes: an absent field keeps its stored
+  value, a present field replaces it, and `tax_lines: []` (present, empty) clears
+  the list while an absent `tax_lines` leaves it alone. `type`, `external_id` and
+  `currency` are immutable — omit them, or echo the stored value; a different
+  value is **400**.
+- **`created_at` and `updated_at` are both returned.** `updated_at` equals
+  `created_at` until a successful `PATCH` rewrites the row; a refused PATCH rolls
+  back, so it never moves. Timestamps are UTC at microsecond precision, so a
+  request offset is normalized (`2026-03-11T07:40:00+01:00` echoes as
+  `2026-03-11T06:40:00Z`).
+- **Money is bounded before it is scaled.** Amounts are parsed as `BigDecimal`
+  and a hostile exponent (`1E+999999999`) is a **400**, never a crash: magnitude is
+  checked before `movePointRight`/`setScale`. Malformed bodies and wrong JSON
+  types (`"total": "abc"`) return **400 `invalid_json`** rather than Spring's
+  default error body.
 - **Invoices are frozen snapshots.** `invoice_items` stores verbatim copies of
   each transaction (metadata and line JSON included); `GET /invoices/{id}`
   never joins live transactions. Consequently a transaction on any invoice is
@@ -132,7 +148,7 @@ All errors share one shape — `error` and `message` plus optional keys:
 | 400 | `validation_error` | `errors: [{field, message}]` |
 | 400 | `too_many_transactions` | `max` |
 | 400 | `invalid_cursor` | — |
-| 400 | `invalid_json` | — |
+| 400 | `invalid_json` | malformed body or wrong JSON type |
 | 404 | `not_found` | — |
 | 404 | `transaction_not_found` | `ids` |
 | 409 | `duplicate_external_id` | `existing_id` |
@@ -149,7 +165,7 @@ All errors share one shape — `error` and `message` plus optional keys:
 | GET | `/health` | `{ "status": "ok" }` |
 | POST | `/transactions` | 201; 409 on duplicate `external_id` |
 | GET | `/transactions/{id}` | 200 / 404 |
-| PATCH | `/transactions/{id}` | replace-whole `total`/`tax_lines`/`fee_lines`/`metadata`/`occurred_at`; 409 if invoiced |
+| PATCH | `/transactions/{id}` | partial: absent fields keep their stored value, present fields replace theirs, `tax_lines: []` clears; 409 if invoiced |
 | DELETE | `/transactions/{id}` | 204; 409 if invoiced; repeat is 404 |
 | GET | `/transactions?limit=&cursor=` | default 50, max 100 |
 | POST | `/invoices` | `{"transaction_id": "..."}` or `{"transaction_ids": [...]}`; 201 |
@@ -195,13 +211,13 @@ curl -sS -X POST $BASE/transactions -H 'Content-Type: application/json' -d "$(se
   "fee_lines": [{"name":"YQ","amount":25.00}],
   "metadata": { "origin": "TXL", "destination": "LHR", "fare": 180.0,
                 "coupons": [ { "carrier": "BA", "flight_number": "BA982", ... } ] },
-  "created_at": "..." }
+  "created_at": "...", "updated_at": "..." }
 ```
 
 Money renders with two decimals (`220.00`); a tax `rate` is present only when the
-input had one (e.g. hotel VAT is `{"name":"VAT","rate":0.0700,"amount":21.70}`,
-the flight's `Airport tax` has no `rate` key). Values inside `metadata` are echoed
-exactly as sent.
+input had one and is echoed without trailing zeros (hotel VAT is
+`{"name":"VAT","rate":0.07,"amount":21.70}`; the flight's `Airport tax` has no
+`rate` key). Values inside `metadata` are echoed exactly as sent.
 
 ### Duplicate create → 409
 
@@ -241,8 +257,8 @@ curl -sS -X POST $BASE/invoices -H 'Content-Type: application/json' \
 
 ```json
 { "id": "inv_...", "currency": "EUR", "total": 685.70, "item_count": 5,
-  "txn_set_hash": "5a280e13...", "created_at": "...",
-  "tax_rollup": [ {"name":"Airport tax","rate":null,"amount":15.0},
+  "created_at": "...", "updated_at": "...",
+  "tax_rollup": [ {"name":"Airport tax","amount":15.0},
                   {"name":"VAT","rate":0.07,"amount":21.7} ],
   "fee_rollup": [ {"name":"Booking fee","amount":4.0},
                   {"name":"YQ","amount":25.0} ],
@@ -273,7 +289,7 @@ curl -sS "$BASE/invoices/$INVOICE?items_limit=2&items_cursor=1" # next page
 ```bash
 curl -sS "$BASE/invoices?limit=10"
 # {"items":[{"id":"inv_...","currency":"EUR","total":685.70,"item_count":5,
-#            "txn_set_hash":"...","created_at":"..."}], "next_cursor":null}
+#            "created_at":"...","updated_at":"..."}], "next_cursor":null}
 ```
 
 ### Invoiced transactions are frozen → 409
@@ -289,19 +305,23 @@ curl -sS -X DELETE $BASE/transactions/$FLIGHT
 
 ### Patch a live transaction, then repoint the invoice
 
-`PATCH` replaces the mutable fields (`total`, `tax_lines`, `fee_lines`,
-`metadata`, `occurred_at`); `type`, `external_id` and `currency` are immutable
-and must be sent unchanged. A live, un-invoiced transaction updates with **200**.
+`PATCH` is **partial**: send only the fields that change. An absent field keeps
+its stored value, a present field replaces it, and `tax_lines: []` clears the
+list. `type`, `external_id` and `currency` are immutable — omit them, or echo the
+stored value. A live, un-invoiced transaction updates with **200**.
 
 ```bash
 # a second rail transaction with its own external_id (the seed's id is already used)
 LIVE_BODY=$(python3 -c 'import json; b=json.load(open("fixtures/task-b/seed-payloads.json"))["rail"]; b["external_id"]="rail-live-1"; print(json.dumps(b))')
 LIVE=$(echo "$LIVE_BODY" | curl -sS -X POST $BASE/transactions -H 'Content-Type: application/json' -d @- | field id)
 
-# PATCH must repeat the same external_id (immutable) and may change total
-PATCH_BODY=$(python3 -c 'import json; b=json.load(open("fixtures/task-b/seed-payloads.json"))["rail"]; b["external_id"]="rail-live-1"; b["total"]=99.0; print(json.dumps(b))')
-curl -sS -X PATCH $BASE/transactions/$LIVE -H 'Content-Type: application/json' -d "$PATCH_BODY"
-# {"id":"txn_...","external_id":"rail-live-1","total":99.00, ...}
+# change only the total: lines, metadata, occurred_at and the immutable fields stay put
+curl -sS -X PATCH $BASE/transactions/$LIVE -H 'Content-Type: application/json' -d '{"total":99.0}'
+# {"id":"txn_...","external_id":"rail-live-1","total":99.00,
+#  "fee_lines":[{"name":"Booking fee","amount":4.00}], ...}
+
+# clear just the fee lines (an absent fee_lines would have left them alone)
+curl -sS -X PATCH $BASE/transactions/$LIVE -H 'Content-Type: application/json' -d '{"fee_lines":[]}'
 
 # repoint the invoice at just that transaction: the snapshot is rebuilt
 curl -sS -X PATCH $BASE/invoices/$INVOICE -H 'Content-Type: application/json' -d "{\"transaction_id\":\"$LIVE\"}"
@@ -361,9 +381,8 @@ call -X PATCH "$BASE/transactions/$FLIGHT" -H 'Content-Type: application/json' -
 call -X DELETE "$BASE/transactions/$FLIGHT"
 
 LIVE_BODY=$(python3 -c 'import json; b=json.load(open("fixtures/task-b/seed-payloads.json"))["rail"]; b["external_id"]="rail-live-1"; print(json.dumps(b))')
-PATCH_BODY=$(python3 -c 'import json; b=json.load(open("fixtures/task-b/seed-payloads.json"))["rail"]; b["external_id"]="rail-live-1"; b["total"]=99.0; print(json.dumps(b))')
 LIVE=$(echo "$LIVE_BODY" | curl -sS -X POST "$BASE/transactions" -H 'Content-Type: application/json' -d @- | field id)
-call -X PATCH "$BASE/transactions/$LIVE" -H 'Content-Type: application/json' -d "$PATCH_BODY"
+call -X PATCH "$BASE/transactions/$LIVE" -H 'Content-Type: application/json' -d '{"total":99.0}'
 call -X PATCH "$BASE/invoices/$INVOICE" -H 'Content-Type: application/json' -d "{\"transaction_id\":\"$LIVE\"}"
 call -X DELETE "$BASE/invoices/$INVOICE"
 call "$BASE/invoices/$INVOICE"

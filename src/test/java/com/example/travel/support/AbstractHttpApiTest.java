@@ -90,6 +90,16 @@ public abstract class AbstractHttpApiTest {
         return exchange("POST", path, body);
     }
 
+    /** Raw body for cases that must not be pre-encoded (malformed JSON / literal numbers). */
+    protected HttpResult postRaw(String path, String rawJson) {
+        return send(HttpRequest.newBuilder()
+                .uri(URI.create("http://localhost:" + port + path))
+                .timeout(Duration.ofSeconds(60))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(rawJson))
+                .build());
+    }
+
     protected HttpResult get(String path) {
         return exchange("GET", path, null);
     }
@@ -103,17 +113,21 @@ public abstract class AbstractHttpApiTest {
     }
 
     private HttpResult exchange(String method, String path, Object body) {
+        HttpRequest.Builder builder = HttpRequest.newBuilder()
+                .uri(URI.create("http://localhost:" + port + path))
+                .timeout(Duration.ofSeconds(60))
+                .header("Content-Type", "application/json");
+        if (body == null) {
+            builder.method(method, HttpRequest.BodyPublishers.noBody());
+        } else {
+            builder.method(method, HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(body)));
+        }
+        return send(builder.build());
+    }
+
+    private HttpResult send(HttpRequest request) {
         try {
-            HttpRequest.Builder builder = HttpRequest.newBuilder()
-                    .uri(URI.create("http://localhost:" + port + path))
-                    .timeout(Duration.ofSeconds(60))
-                    .header("Content-Type", "application/json");
-            if (body == null) {
-                builder.method(method, HttpRequest.BodyPublishers.noBody());
-            } else {
-                builder.method(method, HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(body)));
-            }
-            HttpResponse<String> response = HTTP.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
             String payload = response.body();
             JsonNode json = payload == null || payload.isBlank() ? null : objectMapper.readTree(payload);
             return new HttpResult(response.statusCode(), json, response.headers().map());
@@ -121,7 +135,7 @@ public abstract class AbstractHttpApiTest {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("interrupted during HTTP call", e);
         } catch (java.io.IOException e) {
-            throw new IllegalStateException("HTTP call failed: " + method + " " + path, e);
+            throw new IllegalStateException("HTTP call failed: " + request.method() + " " + request.uri(), e);
         }
     }
 

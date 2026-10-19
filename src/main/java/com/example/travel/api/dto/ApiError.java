@@ -3,11 +3,12 @@ package com.example.travel.api.dto;
 import java.util.Map;
 
 import com.fasterxml.jackson.annotation.JsonAnyGetter;
-import com.fasterxml.jackson.annotation.JsonInclude;
 
 /**
  * Uniform error body: { "error", "message", ...extra keys }.
- * Extras are flattened via {@link JsonAnyGetter} (existing_id, ids, max, ...).
+ * Extras are flattened via {@link JsonAnyGetter}. The global snake_case naming
+ * strategy does not apply to map keys, so callers pass them literally
+ * ("existing_id", "existing_invoice_id", "ids", "max", ...).
  */
 public class ApiError {
 
@@ -30,7 +31,6 @@ public class ApiError {
     }
 
     @JsonAnyGetter
-    @JsonInclude(JsonInclude.Include.NON_NULL)
     public Map<String, Object> getDetails() {
         return details;
     }

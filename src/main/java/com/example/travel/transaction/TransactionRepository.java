@@ -33,11 +33,11 @@ import tools.jackson.databind.ObjectMapper;
 public class TransactionRepository {
 
     private static final String COLUMNS =
-            "id, external_id, type, currency, occurred_at, total_minor, fee_kind, metadata, created_at";
+            "id, external_id, type, currency, occurred_at, total_minor, fee_kind, metadata, created_at, updated_at";
 
     private static final String INSERT_HEADER = """
-            INSERT INTO transactions (id, external_id, type, currency, occurred_at, total_minor, fee_kind, metadata, created_at)
-            VALUES (:id, :externalId, :type, :currency, :occurredAt, :totalMinor, :feeKind, :metadata, :createdAt)
+            INSERT INTO transactions (id, external_id, type, currency, occurred_at, total_minor, fee_kind, metadata, created_at, updated_at)
+            VALUES (:id, :externalId, :type, :currency, :occurredAt, :totalMinor, :feeKind, :metadata, :createdAt, :updatedAt)
             """;
 
     private static final String INSERT_TAX_LINE = """
@@ -182,17 +182,19 @@ public class TransactionRepository {
         }
     }
 
-    /** Replaces occurred_at, total, metadata, fee_kind and both line lists. Caller owns the transaction. */
+    /** Replaces occurred_at, total, metadata, fee_kind, both line lists and updated_at. Caller owns the transaction. */
     public void replaceContent(String id, LocalDateTime occurredAt, long totalMinor, String metadataJson,
-                               FeeKind feeKind, List<TaxLine> taxLines, List<FeeLine> feeLines) {
+                               FeeKind feeKind, LocalDateTime updatedAt,
+                               List<TaxLine> taxLines, List<FeeLine> feeLines) {
         jdbc.update(
                 "UPDATE transactions SET occurred_at = :occurredAt, total_minor = :totalMinor, "
-                        + "metadata = :metadata, fee_kind = :feeKind WHERE id = :id",
+                        + "metadata = :metadata, fee_kind = :feeKind, updated_at = :updatedAt WHERE id = :id",
                 new MapSqlParameterSource()
                         .addValue("occurredAt", occurredAt)
                         .addValue("totalMinor", totalMinor)
                         .addValue("metadata", metadataJson)
                         .addValue("feeKind", feeKind == null ? null : feeKind.wire())
+                        .addValue("updatedAt", updatedAt)
                         .addValue("id", id));
         jdbc.update("DELETE FROM transaction_tax_lines WHERE transaction_id = :id",
                 new MapSqlParameterSource().addValue("id", id));
@@ -252,7 +254,8 @@ public class TransactionRepository {
                 .addValue("totalMinor", transaction.totalMinor())
                 .addValue("feeKind", transaction.feeKind() == null ? null : transaction.feeKind().wire())
                 .addValue("metadata", objectMapper.writeValueAsString(transaction.metadata()))
-                .addValue("createdAt", transaction.createdAt());
+                .addValue("createdAt", transaction.createdAt())
+                .addValue("updatedAt", transaction.updatedAt());
     }
 
     private RowMapper<StoredTransaction> headerMapper() {
@@ -273,13 +276,15 @@ public class TransactionRepository {
                 feeKind == null ? null : FeeKind.fromWire(feeKind),
                 objectMapper.readTree(metadata),
                 rs.getObject("created_at", LocalDateTime.class),
+                rs.getObject("updated_at", LocalDateTime.class),
                 taxLines,
                 feeLines);
     }
 
     private static StoredTransaction withLines(StoredTransaction header, List<TaxLine> taxLines, List<FeeLine> feeLines) {
         return new StoredTransaction(header.id(), header.externalId(), header.type(), header.currency(),
-                header.occurredAt(), header.totalMinor(), header.feeKind(), header.metadata(), header.createdAt(),
+                header.occurredAt(), header.totalMinor(), header.feeKind(), header.metadata(),
+                header.createdAt(), header.updatedAt(),
                 taxLines, feeLines);
     }
 }
