@@ -18,38 +18,38 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 public class InvoiceController {
 
-    private final InvoiceService service;
+    private final InvoiceService invoiceService;
 
-    public InvoiceController(InvoiceService service) {
-        this.service = service;
+    public InvoiceController(InvoiceService invoiceService) {
+        this.invoiceService = invoiceService;
     }
 
     @PostMapping("/invoices")
     ResponseEntity<InvoiceResponse> create(@RequestBody InvoiceTransactionsRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(service.create(request));
+        return ResponseEntity.status(HttpStatus.CREATED).body(invoiceService.create(request));
     }
 
     @GetMapping("/invoices/{id}")
     InvoiceResponse get(@PathVariable String id,
                         @RequestParam(name = "items_limit", required = false) String itemsLimit,
                         @RequestParam(name = "items_cursor", required = false) String itemsCursor) {
-        return service.get(id, itemsLimit, itemsCursor);
+        return invoiceService.get(id, itemsLimit, itemsCursor);
     }
 
     @PatchMapping("/invoices/{id}")
     InvoiceResponse patch(@PathVariable String id, @RequestBody InvoiceTransactionsRequest request) {
-        return service.patch(id, request);
+        return invoiceService.patch(id, request);
     }
 
     @DeleteMapping("/invoices/{id}")
     ResponseEntity<Void> delete(@PathVariable String id) {
-        service.delete(id);
+        invoiceService.delete(id);
         return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/invoices")
     InvoiceListResponse list(@RequestParam(required = false) String limit,
                              @RequestParam(required = false) String cursor) {
-        return service.list(limit, cursor);
+        return invoiceService.list(limit, cursor);
     }
 }

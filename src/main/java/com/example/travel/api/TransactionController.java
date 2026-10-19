@@ -21,36 +21,36 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/transactions")
 public class TransactionController {
 
-    private final TransactionService service;
+    private final TransactionService transactionService;
 
-    public TransactionController(TransactionService service) {
-        this.service = service;
+    public TransactionController(TransactionService transactionService) {
+        this.transactionService = transactionService;
     }
 
     @PostMapping
     ResponseEntity<TransactionResponse> create(@RequestBody CreateTransactionRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(service.create(request));
+        return ResponseEntity.status(HttpStatus.CREATED).body(transactionService.create(request));
     }
 
     @GetMapping("/{id}")
     TransactionResponse get(@PathVariable String id) {
-        return service.get(id);
+        return transactionService.get(id);
     }
 
     @PatchMapping("/{id}")
     TransactionResponse patch(@PathVariable String id, @RequestBody PatchTransactionRequest request) {
-        return service.patch(id, request);
+        return transactionService.patch(id, request);
     }
 
     @DeleteMapping("/{id}")
     ResponseEntity<Void> delete(@PathVariable String id) {
-        service.delete(id);
+        transactionService.delete(id);
         return ResponseEntity.noContent().build();
     }
 
     @GetMapping
     TransactionListResponse list(@RequestParam(required = false) String limit,
                                  @RequestParam(required = false) String cursor) {
-        return service.list(limit, cursor);
+        return transactionService.list(limit, cursor);
     }
 }

@@ -39,19 +39,19 @@ public class TransactionService {
     public static final int LIST_DEFAULT_LIMIT = 50;
     public static final int LIST_MAX_LIMIT = 100;
 
-    private final TransactionRepository repository;
-    private final TransactionValidator validator;
+    private final TransactionRepository transactionRepository;
+    private final TransactionValidator transactionValidator;
     private final DuplicateIdentityHandler duplicateIdentityHandler;
     private final TransactionTemplate transactionTemplate;
     private final ObjectMapper objectMapper;
 
-    public TransactionService(TransactionRepository repository,
-                              TransactionValidator validator,
+    public TransactionService(TransactionRepository transactionRepository,
+                              TransactionValidator transactionValidator,
                               DuplicateIdentityHandler duplicateIdentityHandler,
                               TransactionTemplate transactionTemplate,
                               ObjectMapper objectMapper) {
-        this.repository = repository;
-        this.validator = validator;
+        this.transactionRepository = transactionRepository;
+        this.transactionValidator = transactionValidator;
         this.duplicateIdentityHandler = duplicateIdentityHandler;
         this.transactionTemplate = transactionTemplate;
         this.objectMapper = objectMapper;
@@ -59,23 +59,23 @@ public class TransactionService {
 
     public TransactionResponse create(CreateTransactionRequest request) {
         // validate/hash/JSON before the DB transaction where possible
-        TransactionValidator.Parsed parsed = validator.parse(request);
+        TransactionValidator.Parsed parsed = transactionValidator.parse(request);
         LocalDateTime now = nowUtc();
         StoredTransaction toInsert = new StoredTransaction(
                 newId(), parsed.externalId(), parsed.type(), parsed.currency(), parsed.occurredAt(),
                 parsed.totalMinor(), parsed.feeKind(), parsed.metadata(), now, now,
                 parsed.taxLines(), parsed.feeLines());
         try {
-            transactionTemplate.executeWithoutResult(status -> repository.insert(toInsert));
+            transactionTemplate.executeWithoutResult(status -> transactionRepository.insert(toInsert));
         } catch (DuplicateKeyException e) {
             throw duplicateIdentityHandler.conflict(e, parsed.externalId());
         }
-        return responseOf(repository.findById(toInsert.id())
+        return responseOf(transactionRepository.findById(toInsert.id())
                 .orElseThrow(() -> new IllegalStateException("transaction vanished after insert: " + toInsert.id())));
     }
 
     public TransactionResponse get(String id) {
-        return responseOf(repository.findById(id).orElseThrow(() -> notFound(id)));
+        return responseOf(transactionRepository.findById(id).orElseThrow(() -> notFound(id)));
     }
 
     /**
@@ -88,26 +88,26 @@ public class TransactionService {
         return transactionTemplate.execute(status -> {
             // lockForUpdate loads the header only; hydrate the line lists for the merge
             lockForUpdate(id);
-            StoredTransaction existing = repository.findById(id).orElseThrow(() -> notFound(id));
+            StoredTransaction existing = transactionRepository.findById(id).orElseThrow(() -> notFound(id));
             checkImmutable(existing, request);
-            if (repository.isOnInvoice(id)) {
+            if (transactionRepository.isOnInvoice(id)) {
                 throw ConflictException.transactionInvoiced(id);
             }
-            TransactionValidator.Merged merged = validator.mergeInto(existing, request);
-            repository.replaceContent(id, merged.occurredAt(), merged.totalMinor(),
+            TransactionValidator.Merged merged = transactionValidator.mergeInto(existing, request);
+            transactionRepository.replaceContent(id, merged.occurredAt(), merged.totalMinor(),
                     objectMapper.writeValueAsString(merged.metadata()), merged.feeKind(), nowUtc(),
                     merged.taxLines(), merged.feeLines());
-            return responseOf(repository.findById(id).orElseThrow(() -> notFound(id)));
+            return responseOf(transactionRepository.findById(id).orElseThrow(() -> notFound(id)));
         });
     }
 
     public void delete(String id) {
         transactionTemplate.executeWithoutResult(status -> {
             lockForUpdate(id);
-            if (repository.isOnInvoice(id)) {
+            if (transactionRepository.isOnInvoice(id)) {
                 throw ConflictException.transactionInvoiced(id);
             }
-            repository.delete(id);
+            transactionRepository.delete(id);
         });
     }
 
@@ -115,8 +115,8 @@ public class TransactionService {
         int limit = Pagination.parseLimit(limitParam, LIST_DEFAULT_LIMIT, LIST_MAX_LIMIT, "limit");
         Cursor cursor = Pagination.parseCursor(cursorParam);
         List<StoredTransaction> page = cursor == null
-                ? repository.listFirstPage(limit + 1)
-                : repository.listPageAfter(cursor.createdAt(), cursor.id(), limit + 1);
+                ? transactionRepository.listFirstPage(limit + 1)
+                : transactionRepository.listPageAfter(cursor.createdAt(), cursor.id(), limit + 1);
 
         boolean hasMore = page.size() > limit;
         if (hasMore) {
@@ -127,8 +127,8 @@ public class TransactionService {
                 : null;
 
         List<String> ids = page.stream().map(StoredTransaction::id).toList();
-        Map<String, List<TaxLine>> taxes = ids.isEmpty() ? Map.of() : repository.findTaxLinesByTransactionIds(ids);
-        Map<String, List<FeeLine>> fees = ids.isEmpty() ? Map.of() : repository.findFeeLinesByTransactionIds(ids);
+        Map<String, List<TaxLine>> taxes = ids.isEmpty() ? Map.of() : transactionRepository.findTaxLinesByTransactionIds(ids);
+        Map<String, List<FeeLine>> fees = ids.isEmpty() ? Map.of() : transactionRepository.findFeeLinesByTransactionIds(ids);
         List<TransactionResponse> items = page.stream()
                 .map(t -> responseOf(t, taxes.getOrDefault(t.id(), List.of()), fees.getOrDefault(t.id(), List.of())))
                 .toList();
@@ -138,7 +138,7 @@ public class TransactionService {
     // --------------------------------------------------------------- helpers
 
     private StoredTransaction lockForUpdate(String id) {
-        List<StoredTransaction> rows = repository.findByIdsForUpdate(List.of(id));
+        List<StoredTransaction> rows = transactionRepository.findByIdsForUpdate(List.of(id));
         if (rows.isEmpty()) {
             throw notFound(id);
         }

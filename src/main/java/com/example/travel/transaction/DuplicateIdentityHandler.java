@@ -13,14 +13,14 @@ import org.springframework.stereotype.Component;
 @Component
 public class DuplicateIdentityHandler {
 
-    private final TransactionRepository repository;
+    private final TransactionRepository transactionRepository;
 
-    public DuplicateIdentityHandler(TransactionRepository repository) {
-        this.repository = repository;
+    public DuplicateIdentityHandler(TransactionRepository transactionRepository) {
+        this.transactionRepository = transactionRepository;
     }
 
     public ConflictException conflict(DuplicateKeyException cause, String externalId) {
-        return repository.findByExternalId(externalId)
+        return transactionRepository.findByExternalId(externalId)
                 .map(existing -> ConflictException.duplicateExternalId(existing.id()))
                 .orElseThrow(() -> new IllegalStateException(
                         "unique constraint on external_id=" + externalId + " failed but no committed row found", cause));
