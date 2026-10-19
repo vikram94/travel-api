@@ -208,12 +208,13 @@ public class TransactionRepository {
         jdbc.update("DELETE FROM transactions WHERE id = :id", new MapSqlParameterSource().addValue("id", id));
     }
 
-    /** Cheap invoiced-check backed by idx_invoice_items_tx. */
+    /** Cheap invoiced-check backed by idx_invoice_items_tx; stops at the first hit. */
     public boolean isOnInvoice(String transactionId) {
-        Integer count = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM invoice_items WHERE transaction_id = :id",
-                new MapSqlParameterSource().addValue("id", transactionId), Integer.class);
-        return count != null && count > 0;
+        List<Integer> hit = jdbc.query(
+                "SELECT 1 FROM invoice_items WHERE transaction_id = :id LIMIT 1",
+                new MapSqlParameterSource().addValue("id", transactionId),
+                (rs, rowNum) -> 1);
+        return !hit.isEmpty();
     }
 
     private void insertLines(String transactionId, List<TaxLine> taxLines, List<FeeLine> feeLines) {

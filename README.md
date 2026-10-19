@@ -44,7 +44,7 @@ curl -s localhost:8080/health
 ./gradlew test
 ```
 
-**79 automated tests**, all green: unit tests for `Money`, `Hashing`, `Cursor`
+**83 automated tests**, all green: unit tests for `Money`, `Hashing`, `Cursor`
 and `RollupAccumulator`, and real-HTTP integration tests that start the full
 application on a random port and call it over `java.net.http.HttpClient`.
 
@@ -80,6 +80,10 @@ rm -rf ./data          # next boot recreates the schema (idempotent CREATE TABLE
 | `spring.jackson.property-naming-strategy` | `SNAKE_CASE` | JSON is snake_case |
 | `spring.jackson.deserialization.use-big-decimal-for-floats` | `true` | money stays exact |
 
+Any value can be overridden without editing the file by using Spring's relaxed
+environment binding, e.g. `SPRING_DATASOURCE_URL=jdbc:postgresql://... ./gradlew bootRun`
+or `INVOICE_MAX_TRANSACTIONS=200`. There are no secrets or API keys to configure.
+
 ## Design decisions
 
 - **`total` is gross.** Tax and fee lines are descriptive; they are never added
@@ -108,7 +112,8 @@ rm -rf ./data          # next boot recreates the schema (idempotent CREATE TABLE
   value, a present field replaces it, and `tax_lines: []` (present, empty) clears
   the list while an absent `tax_lines` leaves it alone. `type`, `external_id` and
   `currency` are immutable — omit them, or echo the stored value; a different
-  value is **400**.
+  value is **400**. On a transaction that is already invoiced the frozen-resource
+  **409** takes precedence over that **400**.
 - **`created_at` and `updated_at` are both returned.** `updated_at` equals
   `created_at` until a successful `PATCH` rewrites the row; a refused PATCH rolls
   back, so it never moves. Timestamps are UTC at microsecond precision, so a
@@ -156,7 +161,13 @@ All errors share one shape — `error` and `message` plus optional keys:
 | 409 | `invoice_exists_for_set` | `existing_invoice_id` |
 | 409 | `mixed_currency` | `currencies` |
 | 409 | `transaction_invoiced` | `transaction_id` |
+| 405 | `method_not_allowed` | unsupported method on a known path |
+| 415 | `unsupported_media_type` | body is not `application/json` |
 | 503 | `busy` | `Retry-After: 1` header |
+
+Framework-level client errors (405 unsupported method, 415 unsupported media
+type, and similar Spring `ErrorResponse` exceptions) keep their own 4xx status
+rather than falling through to a 500.
 
 ## Endpoints
 
@@ -221,12 +232,23 @@ input had one and is echoed without trailing zeros (hotel VAT is
 
 ### Duplicate create → 409
 
+`duplicate_flight` carries the **same `external_id`** as `flight`. Posting it
+again is rejected by the database's unique index, so two rows can never exist
+(even for two concurrent requests):
+
 ```bash
 curl -sS -X POST $BASE/transactions -H 'Content-Type: application/json' -d "$(seed duplicate_flight)"
 ```
 
 ```json
 { "error": "duplicate_external_id", "message": "...", "existing_id": "txn_..." }
+```
+
+Prove only **one row** exists — the `external_id` appears exactly once:
+
+```bash
+curl -sS "$BASE/transactions?limit=100" | python3 -c 'import json,sys; print(sum(1 for t in json.load(sys.stdin)["items"] if t["external_id"]=="flight-TXL-LHR-2026-03-11"))'
+# 1
 ```
 
 ### Get and list transactions

@@ -100,6 +100,20 @@ public abstract class AbstractHttpApiTest {
                 .build());
     }
 
+    /** Fully raw request for protocol-level cases (unsupported method / media type). */
+    protected HttpResult request(String method, String path, String contentType, String body) {
+        HttpRequest.Builder builder = HttpRequest.newBuilder()
+                .uri(URI.create("http://localhost:" + port + path))
+                .timeout(Duration.ofSeconds(60));
+        if (contentType != null) {
+            builder.header("Content-Type", contentType);
+        }
+        builder.method(method, body == null
+                ? HttpRequest.BodyPublishers.noBody()
+                : HttpRequest.BodyPublishers.ofString(body));
+        return send(builder.build());
+    }
+
     protected HttpResult get(String path) {
         return exchange("GET", path, null);
     }

@@ -80,19 +80,19 @@ public class TransactionService {
 
     /**
      * Partial PATCH: absent fields keep their stored value, present fields replace
-     * theirs (an empty tax_lines/fee_lines list clears it). Locks the row, rejects
-     * immutable-field changes, then refuses with 409 when the transaction is on any
-     * invoice (snapshots stay frozen).
+     * theirs (an empty tax_lines/fee_lines list clears it). Locks the row, refuses
+     * with 409 when the transaction is on any invoice (snapshots stay frozen), then
+     * rejects immutable-field changes.
      */
     public TransactionResponse patch(String id, PatchTransactionRequest request) {
         return transactionTemplate.execute(status -> {
             // lockForUpdate loads the header only; hydrate the line lists for the merge
             lockForUpdate(id);
             StoredTransaction existing = transactionRepository.findById(id).orElseThrow(() -> notFound(id));
-            checkImmutable(existing, request);
             if (transactionRepository.isOnInvoice(id)) {
                 throw ConflictException.transactionInvoiced(id);
             }
+            checkImmutable(existing, request);
             TransactionValidator.Merged merged = transactionValidator.mergeInto(existing, request);
             transactionRepository.replaceContent(id, merged.occurredAt(), merged.totalMinor(),
                     objectMapper.writeValueAsString(merged.metadata()), merged.feeKind(), nowUtc(),

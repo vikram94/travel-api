@@ -133,4 +133,20 @@ class TransactionPatchTest extends AbstractHttpApiTest {
         assertThat(refused.status()).isEqualTo(409);
         assertThat(refused.error()).isEqualTo("transaction_invoiced");
     }
+
+    @Test
+    void frozenInvoiceWinsOverImmutableFieldErrorOnInvoicedTransaction() {
+        String id = post("/transactions", seed("flight")).id();
+        assertThat(post("/invoices", singleInvoiceBody(id)).status()).isEqualTo(201);
+        JsonNode before = get("/transactions/" + id).body();
+
+        // the frozen-resource rule (409) takes precedence over the immutable-field rule (400)
+        HttpResult refused = patch("/transactions/" + id, Map.of("type", "hotel", "total", 1.0));
+        assertThat(refused.status()).isEqualTo(409);
+        assertThat(refused.error()).isEqualTo("transaction_invoiced");
+
+        JsonNode after = get("/transactions/" + id).body();
+        assertThat(after.get("total").decimalValue()).isEqualByComparingTo(before.get("total").decimalValue());
+        assertThat(after.get("updated_at").asString()).isEqualTo(before.get("updated_at").asString());
+    }
 }

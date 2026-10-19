@@ -1,6 +1,7 @@
 package com.example.travel.api;
 
 import java.sql.SQLException;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -19,8 +20,11 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.QueryTimeoutException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.transaction.TransactionTimedOutException;
+import org.springframework.web.ErrorResponse;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
@@ -28,7 +32,8 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 /**
  * Uniform error bodies: { "error", "message", ...extra keys }.
  * Lock waits, deadlocks and query timeouts become 503 busy with Retry-After: 1
- * — never 500 — so clients can safely retry.
+ * — never 500 — so clients can safely retry. Framework-level client errors
+ * (405, 415, ...) keep their own 4xx status rather than becoming a 500.
  */
 @RestControllerAdvice
 public class ApiExceptionHandler {
@@ -119,6 +124,11 @@ public class ApiExceptionHandler {
         if (isBusy(e)) {
             return busy(e);
         }
+        if (e instanceof ErrorResponse errorResponse) {
+            // Framework-level client errors (405 method not allowed, 415 unsupported
+            // media type, ...) keep their own status instead of becoming a 500.
+            return status(errorResponse.getStatusCode(), errorResponse);
+        }
         log.error("unhandled failure", e);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(new ApiError("internal_error", "unexpected server error", Map.of()));
@@ -131,9 +141,30 @@ public class ApiExceptionHandler {
                 .body(new ApiError("busy", "the service is busy, please retry shortly", Map.of()));
     }
 
+    /** Re-shape a Spring {@link ErrorResponse} into the uniform error body. */
+    private static ResponseEntity<ApiError> status(HttpStatusCode status, ErrorResponse errorResponse) {
+        String message = errorResponse.getBody().getDetail();
+        if (message == null) {
+            message = errorResponse.getBody().getTitle();
+        }
+        if (message == null) {
+            message = "request could not be handled";
+        }
+        return ResponseEntity.status(status).body(new ApiError(codeOf(status), message, Map.of()));
+    }
+
+    private static String codeOf(HttpStatusCode status) {
+        return status instanceof HttpStatus httpStatus
+                ? httpStatus.name().toLowerCase(Locale.ROOT)
+                : "request_error";
+    }
+
     private static boolean isBusy(Throwable error) {
         Throwable current = error;
         while (current != null) {
+            if (current instanceof TransactionTimedOutException) {
+                return true;
+            }
             if (current instanceof SQLException sql) {
                 if (BUSY_ERROR_CODES.contains(sql.getErrorCode())) {
                     return true;

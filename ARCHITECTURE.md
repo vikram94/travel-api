@@ -1,4 +1,4 @@
-# Architecture
+q# Architecture
 
 A small, honest service: Java 21 + Spring Boot 4.1 on Spring JDBC over H2 in
 PostgreSQL compatibility mode. No JPA, no Flyway, no external services. Two
@@ -243,15 +243,18 @@ coerce into the request records are mapped by a single `@RestControllerAdvice`
 to **400 `invalid_json`**; rule failures become **400 `validation_error`** with a
 field list. The same advice maps not-found (404), duplicate / immutable /
 conflict (409) and contention (503), so no exception shape escapes as Spring's
-default error body.
+default error body. Framework-level client errors keep their own status with the
+same body — `405 method_not_allowed`, `415 unsupported_media_type`, and similar
+Spring `ErrorResponse` exceptions — instead of collapsing to a 500.
 
 **503, never 500, for contention.** Lock waits, deadlocks, serialization
 failures and query timeouts are transient: the API maps them to **503** with
 `Retry-After: 1` and `{ "error": "busy" }`. This covers Spring's
 `ConcurrencyFailureException` (incl. `CannotAcquireLockException` /
-`DeadlockLoserDataAccessException`) and `QueryTimeoutException`, plus a
-SQLState/error-code walk (H2 `50200`/`50100`, SQLState `40001`, `55P03`,
-`HYT00`/`HYT01`) as a backstop. Writes run with a ~10 s query timeout and H2
+`DeadlockLoserDataAccessException`) and `QueryTimeoutException`, plus
+`TransactionTimedOutException` and a SQLState/error-code walk (H2
+`50200`/`50100`, SQLState `40001`, `55P03`, `HYT00`/`HYT01`) as a backstop.
+Writes run with a ~10 s query timeout and H2
 `LOCK_TIMEOUT=5000`, so a stuck writer fails fast and retryably instead of
 hanging. A held row lock therefore produces a clean 503 the client can retry
 (test 19) — the row is left untouched.
@@ -264,13 +267,6 @@ and keeps SQL portable. In production the same code points at Postgres, where
 available. Nothing in the schema or SQL is H2-specific beyond the compatibility
 mode.
 
-**What fails first under high volume.** Writes serialize on the row locks they
-take (transaction PATCH/DELETE and invoice create over the same transactions),
-and on the two unique indexes (`external_id`, `txn_set_hash`) — these are the
-correct global arbitration points. Reads are cheap and page-independent
-(stored rollups, keyset seeks). So under load the first symptoms are lock waits
-turned into 503s, not corrupted data or unbounded scans.
-
 **Honest next steps, in order of value.** (1) The 1000 cap is the honest
 boundary of a single-request build; the natural next step is to **split** a
 large invoice into explicit segments or move snapshot construction to an
@@ -280,3 +276,43 @@ database rather than a static OK. (3) Move the "is it invoiced?" guard fully
 into the database with a `NOT NULL` sentinel or a trigger instead of an
 application check. (4) Add metrics for 503 rate and lock-wait latency so
 contention is visible before it becomes a page.
+
+## 11. High volume
+
+Everything the design does for scale is deliberate, and the first thing to give
+under load is throughput, not correctness.
+
+**Reads stay cheap and page-independent.** `GET /transactions/{id}` and
+`GET /invoices/{id}` are primary-key point lookups; a transaction's tax/fee lines
+are one extra `IN` per table, never per row. `invoice_items` carries
+`idx_invoice_items_tx` on `transaction_id`, so the "is this transaction on any
+invoice?" guard is an index probe that stops at the first row — no scan of the
+billing history. Invoice reads serve **stored rollups** (`invoice_tax_rollup`,
+`invoice_fee_rollup`) rather than re-aggregating items, so a large invoice's
+totals are O(1) regardless of item count.
+
+**Lists are bounded, never a full-table dump.** `GET /transactions` and
+`GET /invoices` use **keyset (seek) pagination** — `WHERE (created_at, id) > (:createdAt, :id) ORDER BY created_at, id LIMIT n` — with a default of 50 and a
+hard max of 100. There is no `OFFSET`, so page 10 000 costs the same as page 1
+and no page can be asked to materialize the whole table. Invoice items page the
+same way (default 100, max 500), and the 1000-transaction build cap bounds the
+largest snapshot a single request can create. Multi-id loads are chunked
+`IN (...)` clauses of 500.
+
+**Writes serialize on the correct arbitration points.** Transaction
+`PATCH`/`DELETE` and invoice create take row locks in a global order
+(transactions sorted by id, `FOR UPDATE`), so overlapping writers queue instead
+of deadlocking in the common case; when H2 still reports a lock wait or
+deadlock, it surfaces as a retryable `503`. The two unique indexes —
+`external_id` and `txn_set_hash` — are the database-level guarantees that the
+same charge or the same billed set cannot be written twice, even across
+concurrent requests. These are exactly the points that *should* contend.
+
+**What fails first, and what does not.** Under sustained write load the first
+symptom is lock-wait latency turning into `503` + `Retry-After: 1`; clients
+retry and succeed. What you never get is a duplicated `external_id`, a
+double-invoiced set, a torn snapshot, or an unbounded scan — those are made
+impossible by the schema and the query shapes rather than by application
+checks. Past a single H2 process the honest scaling step is to point the same
+Postgres-portable code at a networked database, where row locks and the unique
+indexes spread across instances.
