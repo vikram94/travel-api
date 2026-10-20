@@ -139,6 +139,10 @@ or `INVOICE_MAX_TRANSACTIONS=200`. There are no secrets or API keys to configure
   deployments.
 - **Deliberately out of scope:** OCR, auth, Redis/Kafka, `Idempotency-Key`,
   payload hashes, audit logs, and LLM calls.
+- **Honest about its gaps.** `ARCHITECTURE.md` §12 lists every assumption that is
+  *not* production-ready — dev DB credentials (`sa` with an empty password), H2
+  single-process storage, idempotent DDL instead of Flyway migrations, no
+  auth/TLS/metrics/structured logs — together with what we would change first.
 
 ### Error body
 

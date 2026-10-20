@@ -1,4 +1,4 @@
-q# Architecture
+# Architecture
 
 A small, honest service: Java 21 + Spring Boot 4.1 on Spring JDBC over H2 in
 PostgreSQL compatibility mode. No JPA, no Flyway, no external services. Two
@@ -316,3 +316,98 @@ impossible by the schema and the query shapes rather than by application
 checks. Past a single H2 process the honest scaling step is to point the same
 Postgres-portable code at a networked database, where row locks and the unique
 indexes spread across instances.
+
+## 12. Assumptions and production gaps
+
+Everything above was chosen so this can run from a clone with one command and no
+external services. This section is the honest list of what is **not**
+production-ready, so a reviewer never has to guess which shortcuts were
+accidental.
+
+### A. Database and durability
+
+- **Dev credentials.** H2 is started with its default super-user `sa` and an
+  **empty password** (`src/main/resources/application.properties:6-7`), on a
+  local file (`./data/travel`). Fine on a laptop, unacceptable anywhere else. In
+  production: a networked Postgres, credentials injected from a secret manager
+  (never committed in `application.properties`), TLS to the database, and
+  least-privilege roles — the app needs `SELECT`/`INSERT`/`UPDATE`/`DELETE` on
+  five tables, not owner.
+- **Single process, single disk.** `jdbc:h2:file:./data/travel` means one writer
+  JVM and one file: no replication, no backup, no failover, and
+  `DB_CLOSE_DELAY=-1` ties the database lifetime to the process. In production:
+  managed Postgres with HA plus a tested backup/restore policy. The service is
+  already stateless, so nothing else about it changes.
+- **Idempotent DDL, not migrations.** `spring.sql.init.mode=always` replays
+  `schema.sql` at boot. Every statement is `CREATE ... IF NOT EXISTS` and there
+  is not one `ALTER`, so restarts are safe but an existing table can never be
+  *evolved*. Production needs Flyway/Liquibase versioned migrations — and the
+  README's `rm -rf ./data` reset trick, which is right for a throwaway dev
+  database, would destroy real data. H2 also cannot express several Postgres
+  index options (partial/expression indexes).
+- **Pool and timeouts were eyeballed, not measured.** Hikari
+  `maximum-pool-size=10`, `spring.transaction.default-timeout=10s` and H2
+  `LOCK_TIMEOUT=5000` were picked to fail fast and retryably. In production they
+  are benchmarked against real traffic, and a large invoice build would move to
+  a queue instead of holding a pooled connection for up to 10 s.
+
+### B. Security
+
+- **No authentication and no authorization.** Every endpoint — including
+  `PATCH`/`DELETE` on both resources — is open to whoever can reach port 8080.
+  The brief lists auth as out of scope, but a shipped version would put an
+  identity layer (OIDC/JWT) plus per-tenant authorization in front, and the
+  "billed transactions are frozen" rule would then also be enforced by
+  ownership, not only by the invoice link.
+- **No TLS.** Plain HTTP on `:8080`; production would terminate HTTPS and set
+  HSTS at the edge.
+- **No edge limits.** There is no rate limiting and no reverse-proxy body limit.
+  The application guards (`invoice.max-transactions=1000`, 64 KB metadata, 100
+  tax/fee lines) bound *our* work, not the socket. A proxy would add per-client
+  quotas and request-size limits.
+- **`.env` is git-ignored but never read.** Java does not load `.env`; the app
+  uses Spring relaxed binding, so the real mechanism is
+  `SPRING_DATASOURCE_PASSWORD=... ./gradlew bootRun` or the platform's secret
+  injection.
+
+### C. Operability and observability
+
+- **`/health` is a static body.** `HealthController` returns `{"status":"ok"}`
+  without touching the database, so it cannot detect a broken datasource.
+  `/health/ready` with a real DB probe is the first next step in §10.
+- **No metrics, tracing, or Actuator.** The build has only the `web`,
+  `validation` and `jdbc` starters, so there is no Micrometer: contention would
+  show up first as user-visible 503s rather than as a dashboard alert (§10(4)).
+- **Logging is Spring Boot's default console logger.** No `logback-spring.xml`,
+  no structured JSON, no rotation or retention, no correlation/request IDs, and
+  stack traces go to stdout. Note also that `metadata` is stored verbatim and
+  echoed on error paths — it can contain traveller PII (hotel address) — so a
+  production deployment would need redaction and access-controlled log storage.
+- **No graceful shutdown.** `server.shutdown=graceful` is not set, so a deploy
+  can cut in-flight requests; and with a file-backed H2 the idea of a rolling
+  restart does not apply anyway — it is a single process.
+
+### D. Data semantics
+
+- **Timestamps are stored naive and are always UTC.** Columns are `TIMESTAMP(6)`
+  without a time zone; the API normalizes offsets to `Z` and the service writes
+  UTC. Clients must accept UTC. In production I would use `TIMESTAMPTZ` (or
+  declare "all timestamps are UTC" a schema invariant) so a future writer cannot
+  store local time by accident.
+- **`txn_set_hash` is a dedup fingerprint, not a content proof.** It hashes the
+  *sorted ids*, not the amounts, so two invoices over the same ids must agree by
+  construction; it is deliberately not a Merkle-style contents hash (§6).
+- **No audit history.** `updated_at` shows that a row moved, but not who changed
+  what or when an invoice was built; `invoice_items` is a snapshot, not a version
+  log. A production billing system would keep an append-only audit table.
+- **Snapshot rebuild is last-write-wins.** Concurrent `PATCH /invoices/{id}`
+  calls do not error — the row lock serializes them and the later transaction
+  wins (§10). That is atomic and documented, but a client cannot detect that its
+  rebuild was superseded; an `ETag`/`If-Match` version check would fix that.
+
+### E. Deliberately out of scope (per the brief)
+
+Receipts/OCR, auto-itemize, inventory, auth, UI, PDF, payments, policy, live GDS
+providers, Redis/Kafka, distributed lock managers, and Prometheus/nginx. These
+are omissions by instruction, not accidents — and none of them stand in for the
+schema, indexes and pagination described in §11.
